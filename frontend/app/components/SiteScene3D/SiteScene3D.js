@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useMemo } from "react";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, GizmoHelper, GizmoViewcube, Grid, Environment, Html } from "@react-three/drei";
 
 import Building from "./Building";
@@ -24,7 +24,23 @@ function simZoneId(type, x, y) {
   return `${type}-${x}-${y}`;
 }
 
-function Scene({ cells, simulationState, activeTrucks, buildPct, buildStatus, buildBlockers, blockedRoadCells, readOnly }) {
+function LandingCameraRig() {
+  const ORBIT_PERIOD = 60;
+  const RADIUS = 55;
+  const ELEVATION = 28;
+
+  useFrame(({ camera, clock }) => {
+    const angle = (clock.elapsedTime / ORBIT_PERIOD) * Math.PI * 2;
+    camera.position.x = 15 + Math.cos(angle) * RADIUS;
+    camera.position.z = 15 + Math.sin(angle) * RADIUS;
+    camera.position.y = ELEVATION;
+    camera.lookAt(15, 0, 15);
+  });
+
+  return null;
+}
+
+function Scene({ cells, simulationState, activeTrucks, buildPct, buildStatus, buildBlockers, blockedRoadCells, readOnly, landingMode }) {
   const simCranes = simulationState?.cranes || [];
   const workersByZone = simulationState?.workers || {};
 
@@ -228,7 +244,7 @@ function Scene({ cells, simulationState, activeTrucks, buildPct, buildStatus, bu
         }
       })}
        {/* Build status badge — floats above the building */}
-       {buildingAnchor && badge && (
+       {!landingMode && buildingAnchor && badge && (
         <Html
           position={[buildingAnchor.x, buildingAnchor.y, buildingAnchor.z]}
           center
@@ -293,20 +309,25 @@ function Scene({ cells, simulationState, activeTrucks, buildPct, buildStatus, bu
         <Truck key={truck.id} truck={truck} blockedRoadCells={blockedRoadCells} />
       ))}
 
-      <OrbitControls
-        makeDefault
-        target={[15, 0, 15]}
-        minDistance={15}
-        maxDistance={120}
-        enablePan={!readOnly}
-        autoRotate={readOnly}
-        autoRotateSpeed={0.3}
-      />
-
-      {!readOnly && (
-        <GizmoHelper alignment="top-right" margin={[80, 80]}>
-          <GizmoViewcube color="#1A1D2B" strokeColor="#6366F1" textColor="#e2e8f0" />
-        </GizmoHelper>
+      {landingMode ? (
+        <LandingCameraRig />
+      ) : (
+        <>
+          <OrbitControls
+            makeDefault
+            target={[15, 0, 15]}
+            minDistance={15}
+            maxDistance={120}
+            enablePan={!readOnly}
+            autoRotate={readOnly}
+            autoRotateSpeed={0.3}
+          />
+          {!readOnly && (
+            <GizmoHelper alignment="top-right" margin={[80, 80]}>
+              <GizmoViewcube color="#1A1D2B" strokeColor="#6366F1" textColor="#e2e8f0" />
+            </GizmoHelper>
+          )}
+        </>
       )}
     </>
   );
@@ -323,17 +344,24 @@ export default function SiteScene3D({
   buildBlockers,
   blockedRoadCells,
   readOnly = false,
+  landingMode = false,
 }) {
   const safeBlockedRoadCells = blockedRoadCells instanceof Set ? blockedRoadCells : new Set();
 
   return (
     <Canvas
-      camera={{ position: [50, 45, 50], fov: 50 }}
-      style={{ width: "100%", height: "100%", background: "#0a0e1a" }}
+      camera={{
+        position: landingMode ? [70, 28, 70] : [50, 45, 50],
+        fov: 50,
+      }}
+      style={{
+        width: "100%", height: "100%", background: "#0a0e1a",
+        pointerEvents: landingMode ? "none" : "auto",
+      }}
       shadows
     >
       <Suspense fallback={null}>
-      <Scene
+        <Scene
           cells={cells}
           simulationState={simulationState}
           activeTrucks={activeTrucks || []}
@@ -342,6 +370,7 @@ export default function SiteScene3D({
           buildBlockers={buildBlockers}
           blockedRoadCells={safeBlockedRoadCells}
           readOnly={readOnly}
+          landingMode={landingMode}
         />
       </Suspense>
     </Canvas>
