@@ -65,6 +65,26 @@ function Scene({ cells, simulationState, activeTrucks, buildPct, buildStatus, bu
     return arr;
   }, [cells, blockedRoadCells]);
 
+  const fenceNeighborMap = useMemo(() => {
+    const isFenceType = (idx) => {
+      const c = cells[idx];
+      return c && (c.id === "fence" || c.id === "boundary");
+    };
+    const map = {};
+    cells.forEach((cell, i) => {
+      if (!cell || (cell.id !== "fence" && cell.id !== "boundary")) return;
+      const cx = i % GRID_SIZE;
+      const cy = Math.floor(i / GRID_SIZE);
+      map[i] = {
+        right: cx + 1 < GRID_SIZE && isFenceType(cy * GRID_SIZE + cx + 1),
+        left:  cx - 1 >= 0 && isFenceType(cy * GRID_SIZE + cx - 1),
+        down:  cy + 1 < GRID_SIZE && isFenceType((cy + 1) * GRID_SIZE + cx),
+        up:    cy - 1 >= 0 && isFenceType((cy - 1) * GRID_SIZE + cx),
+      };
+    });
+    return map;
+  }, [cells]);
+
   const buildingAnchor = useMemo(() => {
     const b = zones.find((z) => z.cell.id === "building");
     if (!b) return null;
@@ -189,7 +209,7 @@ function Scene({ cells, simulationState, activeTrucks, buildPct, buildStatus, bu
             return <Parking key={key} x={x} z={y} width={w} depth={h} />;
 
           case "fence":
-            return <Fence key={key} x={x} z={y} />;
+            return <Fence key={key} x={x} z={y} neighbors={fenceNeighborMap[index]} />;
 
           case "manlift":
             return <ManLift key={key} x={x} z={y} />;
@@ -198,7 +218,7 @@ function Scene({ cells, simulationState, activeTrucks, buildPct, buildStatus, bu
             return <Delivery key={key} x={x} z={y} width={w} depth={h} />;
 
           case "boundary":
-            return <Boundary key={key} x={x} z={y} />;
+            return <Boundary key={key} x={x} z={y} neighbors={fenceNeighborMap[index]} />;
 
           case "truck_staging":
             return <TruckStaging key={key} x={x} z={y} width={w} depth={h} />;

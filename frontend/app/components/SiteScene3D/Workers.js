@@ -1,17 +1,62 @@
+// Materials used: MAT.vestOrange (torso, arms), MAT.denim (legs), MAT.skin (head), MAT.hardHat (hat, brim)
+// Max 8 visible figures. Deterministic pseudo-random layout with Y rotation variation.
 "use client";
 
 import { useMemo } from "react";
 import { Html } from "@react-three/drei";
+import { MAT } from "./matPalette";
 
-function seededRandom(seed) {
-  let s = seed;
-  return () => {
-    s = (s * 16807 + 0) % 2147483647;
-    return (s - 1) / 2147483646;
-  };
+const MAX_VISIBLE = 8;
+const ORIENTATIONS = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2];
+
+function Worker({ rotation }) {
+  return (
+    <group rotation={[0, rotation, 0]}>
+      {/* Legs */}
+      <mesh position={[-0.1, 0.35, 0]} castShadow>
+        <boxGeometry args={[0.15, 0.7, 0.18]} />
+        <meshStandardMaterial {...MAT.denim} />
+      </mesh>
+      <mesh position={[0.1, 0.35, 0]} castShadow>
+        <boxGeometry args={[0.15, 0.7, 0.18]} />
+        <meshStandardMaterial {...MAT.denim} />
+      </mesh>
+
+      {/* Torso */}
+      <mesh position={[0, 0.9, 0]} castShadow>
+        <boxGeometry args={[0.4, 0.8, 0.25]} />
+        <meshStandardMaterial {...MAT.vestOrange} />
+      </mesh>
+
+      {/* Arms */}
+      <mesh position={[-0.28, 1.1, 0]} rotation={[0, 0, 0.15]} castShadow>
+        <boxGeometry args={[0.12, 0.6, 0.12]} />
+        <meshStandardMaterial {...MAT.vestOrange} />
+      </mesh>
+      <mesh position={[0.28, 1.1, 0]} rotation={[0, 0, -0.15]} castShadow>
+        <boxGeometry args={[0.12, 0.6, 0.12]} />
+        <meshStandardMaterial {...MAT.vestOrange} />
+      </mesh>
+
+      {/* Head */}
+      <mesh position={[0, 1.55, 0]} castShadow>
+        <sphereGeometry args={[0.15, 8, 8]} />
+        <meshStandardMaterial {...MAT.skin} />
+      </mesh>
+
+      {/* Hard hat crown */}
+      <mesh position={[0, 1.68, 0]} castShadow>
+        <cylinderGeometry args={[0.18, 0.2, 0.1, 8]} />
+        <meshStandardMaterial {...MAT.hardHat} />
+      </mesh>
+      {/* Hard hat brim */}
+      <mesh position={[0, 1.635, 0.03]} castShadow>
+        <cylinderGeometry args={[0.24, 0.24, 0.02, 8]} />
+        <meshStandardMaterial {...MAT.hardHat} />
+      </mesh>
+    </group>
+  );
 }
-
-const MAX_VISIBLE = 15;
 
 export default function Workers({ x, z, width, depth, count }) {
   const cx = x + width / 2;
@@ -20,44 +65,40 @@ export default function Workers({ x, z, width, depth, count }) {
   const overflow = count - MAX_VISIBLE;
 
   const figures = useMemo(() => {
-    const rng = seededRandom(x * 1000 + z);
+    if (visibleCount <= 0) return [];
     const arr = [];
-    for (let i = 0; i < visibleCount; i++) {
-      arr.push({
-        fx: (rng() - 0.5) * (width - 0.6),
-        fz: (rng() - 0.5) * (depth - 0.6),
-      });
+    const cols = Math.ceil(Math.sqrt(visibleCount));
+    const rows = Math.ceil(visibleCount / cols);
+    const spacingX = (width - 0.8) / Math.max(cols, 1);
+    const spacingZ = (depth - 0.8) / Math.max(rows, 1);
+    let idx = 0;
+    for (let r = 0; r < rows && idx < visibleCount; r++) {
+      for (let c = 0; c < cols && idx < visibleCount; c++) {
+        const jitterX = ((idx * 37) % 7 - 3) * 0.06;
+        const jitterZ = ((idx * 53) % 7 - 3) * 0.06;
+        arr.push({
+          fx: (c - (cols - 1) / 2) * spacingX + jitterX,
+          fz: (r - (rows - 1) / 2) * spacingZ + jitterZ,
+          rot: ORIENTATIONS[idx % 4],
+        });
+        idx++;
+      }
     }
     return arr;
-  }, [x, z, width, depth, visibleCount]);
+  }, [width, depth, visibleCount]);
+
+  if (count <= 0) return <group />;
 
   return (
     <group position={[cx, 0, cz]}>
-      {/* Ground tile */}
-      <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[width, depth]} />
-        <meshStandardMaterial color="#3b82f6" transparent opacity={0.1} />
-      </mesh>
-
-      {/* Worker figures */}
       {figures.map((f, i) => (
         <group key={i} position={[f.fx, 0, f.fz]}>
-          {/* Body */}
-          <mesh position={[0, 0.35, 0]}>
-            <cylinderGeometry args={[0.12, 0.12, 0.5, 6]} />
-            <meshStandardMaterial color="#f97316" />
-          </mesh>
-          {/* Head */}
-          <mesh position={[0, 0.7, 0]}>
-            <sphereGeometry args={[0.1, 8, 8]} />
-            <meshStandardMaterial color="#fbbf24" />
-          </mesh>
+          <Worker rotation={f.rot} />
         </group>
       ))}
 
-      {/* Overflow label */}
       {overflow > 0 && (
-        <Html position={[0, 1.2, 0]} center>
+        <Html position={[0, 2.1, 0]} center>
           <div style={{
             background: "rgba(15,17,23,0.85)", color: "#f97316",
             fontSize: 10, fontWeight: 700, padding: "2px 6px",
