@@ -1157,6 +1157,8 @@ export default function Home() {
                     border: "1px solid rgba(255,255,255,0.04)",
                     borderRadius: 6,
                     overflow: "hidden",
+                    userSelect: "none",
+                    WebkitUserSelect: "none",
                   }}
                 >
                   {(() => {
