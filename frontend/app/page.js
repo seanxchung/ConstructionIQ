@@ -223,6 +223,7 @@ export default function Home() {
   const scrollRef = useRef(null);
   const simulatingRef = useRef(false);
   const skipInProgressRef = useRef(false);
+  const latestSkipTargetRef = useRef(null);
   const alertTimerRef = useRef(null);
   const dragRef = useRef(null);
   const gridRef = useRef(null);
@@ -579,6 +580,7 @@ export default function Home() {
   const skipDays = (n) => {
     const target = Math.min(day + n, projectDuration);
     skipInProgressRef.current = true;
+    latestSkipTargetRef.current = target;
     setDay(target);
     fetch(`${API_BASE}/api/simulate`, {
       method: "POST",
@@ -587,6 +589,11 @@ export default function Home() {
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
+        // Stale-response guard: if the user has clicked +7 again since this
+        // fetch started, latestSkipTargetRef will have advanced past `target`.
+        // Apply the response only if it's still the most recent skip.
+        if (latestSkipTargetRef.current !== target) return;
+
         if (data) {
           setSimulationState(data.simulation || null);
           setBuildProgressState(data.build_progress || null);
@@ -1130,6 +1137,8 @@ export default function Home() {
                     day={day}
                     projectDuration={projectDuration}
                     buildPct={buildPct}
+                    buildStatus={buildStatus}
+                    buildBlockers={buildBlockers}
                     blockedRoadCells={blockedRoadCells}
                     readOnly={false}
                   />

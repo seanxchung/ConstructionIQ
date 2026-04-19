@@ -2,7 +2,7 @@
 
 import { Suspense, useMemo } from "react";
 import { Canvas } from "@react-three/fiber";
-import { OrbitControls, GizmoHelper, GizmoViewcube, Grid, Environment } from "@react-three/drei";
+import { OrbitControls, GizmoHelper, GizmoViewcube, Grid, Environment, Html } from "@react-three/drei";
 
 import Building from "./Building";
 import Crane from "./Crane";
@@ -24,7 +24,7 @@ function simZoneId(type, x, y) {
   return `${type}-${x}-${y}`;
 }
 
-function Scene({ cells, simulationState, activeTrucks, buildPct, blockedRoadCells, readOnly }) {
+function Scene({ cells, simulationState, activeTrucks, buildPct, buildStatus, buildBlockers, blockedRoadCells, readOnly }) {
   const simCranes = simulationState?.cranes || [];
   const workersByZone = simulationState?.workers || {};
 
@@ -64,6 +64,49 @@ function Scene({ cells, simulationState, activeTrucks, buildPct, blockedRoadCell
     });
     return arr;
   }, [cells, blockedRoadCells]);
+
+  const buildingAnchor = useMemo(() => {
+    const b = zones.find((z) => z.cell.id === "building");
+    if (!b) return null;
+    const w = b.cell.width || 6;
+    const h = b.cell.height || 6;
+
+    // Building.js phase heights (read from that file):
+    //   excavation 0-15%   → roofline ~0   (dirt piles at y=0.15, slab at y=-0.4)
+    //   foundation 15-30%  → roofline ~0.5 (slab top)
+    //   structure  30-55%  → roofline grows from 3.5 to 24.5 as buildPct: 30→55
+    //   mep        55-75%  → roofline ~25  (steady at FULL_HEIGHT + 0.5)
+    //   finishing  75-90%  → roofline ~25.3
+    //   complete   90-100% → roofline ~25.8 (includes beacon at y=25)
+    // Badge sits `clearance` units above the roofline.
+    const clearance = 2.5;
+    let roofline;
+    if (buildPct <= 15) roofline = 0.3;
+    else if (buildPct <= 30) roofline = 0.5;
+    else if (buildPct <= 55) {
+      // t goes 0 → 1 as buildPct goes 30 → 55
+      const t = (buildPct - 30) / 25;
+      const currentHeight = Math.max(3, t * 24); // matches StructuralFrame math
+      roofline = currentHeight + 0.5;
+    }
+    else if (buildPct <= 75) roofline = 25;    // MEP phase uses FULL_HEIGHT
+    else if (buildPct <= 90) roofline = 25.3;  // Finishing: FULL_HEIGHT + roof slab
+    else roofline = 26;                         // Complete: includes beacon
+
+    return {
+      x: b.x + w / 2,
+      z: b.y + h / 2,
+      y: roofline + clearance,
+    };
+  }, [zones, buildPct]);
+
+  const statusStyles = {
+    stalled:  { color: "#ef4444", border: "rgba(239,68,68,0.35)",  bg: "rgba(239,68,68,0.08)",  label: "STALLED" },
+    delayed:  { color: "#eab308", border: "rgba(234,179,8,0.35)",  bg: "rgba(234,179,8,0.08)",  label: "DELAYED" },
+    on_track: { color: "#22c55e", border: "rgba(34,197,94,0.3)",   bg: "rgba(34,197,94,0.06)",  label: "ON TRACK" },
+  };
+  const badge = buildStatus && statusStyles[buildStatus] ? statusStyles[buildStatus] : null;
+  const primaryBlocker = Array.isArray(buildBlockers) && buildBlockers.length > 0 ? buildBlockers[0] : null;
 
   return (
     <>
@@ -171,6 +214,66 @@ function Scene({ cells, simulationState, activeTrucks, buildPct, blockedRoadCell
             return null;
         }
       })}
+       {/* Build status badge — floats above the building */}
+       {buildingAnchor && badge && (
+        <Html
+          position={[buildingAnchor.x, buildingAnchor.y, buildingAnchor.z]}
+          center
+          distanceFactor={50}
+          occlude={false}
+          style={{ pointerEvents: "none", userSelect: "none" }}
+        >
+          <div style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 4,
+            padding: "6px 10px",
+            background: "rgba(15,17,23,0.85)",
+            backdropFilter: "blur(6px)",
+            border: `1px solid ${badge.border}`,
+            borderRadius: 6,
+            fontFamily: "inherit",
+            whiteSpace: "nowrap",
+            boxShadow: "0 2px 12px rgba(0,0,0,0.4)",
+          }}>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}>
+              <span style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: badge.color,
+                opacity: 0.9,
+              }} />
+              <span style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: "0.08em",
+                color: badge.color,
+              }}>
+                {badge.label}
+              </span>
+            </div>
+            {primaryBlocker && buildStatus !== "on_track" && (
+              <span style={{
+                fontSize: 9,
+                fontWeight: 500,
+                color: "#8B8FA3",
+                letterSpacing: "0.01em",
+                maxWidth: 200,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}>
+                {primaryBlocker}
+              </span>
+            )}
+          </div>
+        </Html>
+      )}
 
       {/* Animated trucks */}
       {activeTrucks.map((truck) => (
@@ -203,6 +306,8 @@ export default function SiteScene3D({
   day,
   projectDuration,
   buildPct,
+  buildStatus,
+  buildBlockers,
   blockedRoadCells,
   readOnly = false,
 }) {
@@ -215,11 +320,13 @@ export default function SiteScene3D({
       shadows
     >
       <Suspense fallback={null}>
-        <Scene
+      <Scene
           cells={cells}
           simulationState={simulationState}
           activeTrucks={activeTrucks || []}
           buildPct={buildPct || 0}
+          buildStatus={buildStatus}
+          buildBlockers={buildBlockers}
           blockedRoadCells={safeBlockedRoadCells}
           readOnly={readOnly}
         />
