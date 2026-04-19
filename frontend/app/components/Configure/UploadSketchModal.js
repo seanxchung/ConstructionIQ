@@ -233,6 +233,41 @@ export default function UploadSketchModal({ isOpen, onApply, onClose }) {
                 <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.5 }}>
                   Print the 30×30 grid template, draw your site layout with a highlighter, label each zone, then snap a photo.
                 </span>
+                <div style={{ marginTop: 8 }}>
+                  <a
+                    href="/30x30-grid-template.pdf"
+                    download="30x30-grid-template.pdf"
+                    onClick={(e) => e.stopPropagation()}
+                    style={{
+                      fontSize: 11,
+                      color: "#f59e0b",
+                      textDecoration: "none",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      padding: "4px 10px",
+                      borderRadius: 6,
+                      border: "1px solid rgba(245,158,11,0.2)",
+                      background: "rgba(245,158,11,0.05)",
+                      transition: "background 0.15s, border-color 0.15s",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = "rgba(245,158,11,0.1)";
+                      e.currentTarget.style.borderColor = "rgba(245,158,11,0.35)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "rgba(245,158,11,0.05)";
+                      e.currentTarget.style.borderColor = "rgba(245,158,11,0.2)";
+                    }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    Don&#39;t have a grid? Download printable template
+                  </a>
+                </div>
               </div>
 
               {selectedFile && (
