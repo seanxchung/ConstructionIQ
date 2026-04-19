@@ -342,7 +342,7 @@ function RecoveryCard({ node, pos, isSelected, onMouseDown }) {
 export default function ScenarioTree({ tree, selectedId, onSelect }) {
   const containerRef = useRef(null);
   const svgRef = useRef(null);
-  const [dims, setDims] = useState({ w: 800, h: 600 });
+  const [dims, setDims] = useState({ w: 0, h: 0 });
   const [hoveredId, setHoveredId] = useState(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
@@ -376,6 +376,7 @@ export default function ScenarioTree({ tree, selectedId, onSelect }) {
   const edges = useMemo(() => buildEdges(tree), [tree]);
 
   useEffect(() => {
+    if (dims.w === 0 || dims.h === 0) return;
     if (Object.keys(positions).length === 0) return;
     if (initialFitDoneRef.current) return;
     const fit = fitToView(positions, dims.w, dims.h);

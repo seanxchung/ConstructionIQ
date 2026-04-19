@@ -26,7 +26,7 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
     if (!file.name.toLowerCase().endsWith(".pdf")) {
       setState("error");
       setErrorMsg("Please select a PDF file.");
-      return;
+
     }
     setSelectedFile(file);
     setState("idle");

@@ -3,6 +3,7 @@
 import { Suspense, useMemo, useState, useEffect } from "react";
 import SiteScene3D from "../SiteScene3D/SiteScene3D";
 import AuthForm from "./AuthForm";
+import CraneLogo from "../CraneLogo";
 
 const GRID = 30;
 
@@ -35,8 +36,8 @@ function buildLandingCells() {
   const cells = Array(GRID * GRID).fill(null);
 
   placeOrigin(cells, ZONE_DEFS.building, 12, 12, 6, 6, { floors: 8, buildingType: "office" });
-  placeOrigin(cells, ZONE_DEFS.crane, 10, 10, 2, 2);
-  placeOrigin(cells, ZONE_DEFS.crane, 18, 10, 2, 2);
+  placeOrigin(cells, ZONE_DEFS.crane, 9, 8, 2, 2);
+  placeOrigin(cells, ZONE_DEFS.crane, 19, 18, 2, 2);
   placeOrigin(cells, ZONE_DEFS.office, 4, 4, 4, 2);
   placeOrigin(cells, ZONE_DEFS.parking, 22, 20, 4, 3);
   placeOrigin(cells, ZONE_DEFS.materials, 6, 18, 3, 2);
@@ -75,9 +76,9 @@ export default function Landing() {
       position: "fixed", inset: 0, overflow: "hidden",
       background: "#0A0B10",
     }}>
-      {/* Layer 1: 3D scene background */}
+      {/* Layer 1: 3D scene background — pushed up so bottom ~1/6 is empty */}
       <div style={{
-        position: "absolute", inset: 0, zIndex: 0,
+        position: "absolute", top: 0, left: 0, right: 0, bottom: "16.6%", zIndex: 0,
       }}>
         <Suspense fallback={null}>
           <SiteScene3D
@@ -113,23 +114,21 @@ export default function Landing() {
         display: "flex", flexDirection: "column",
         pointerEvents: "none",
       }}>
-        {/* Top-left nav wordmark */}
+        {/* Top nav bar */}
         <div style={{
-          position: "absolute", top: 20, left: 24,
-          display: "flex", alignItems: "center", gap: 10,
+          width: "100%", height: 56,
+          display: "flex", alignItems: "center",
+          padding: "0 28px",
+          background: "rgba(15, 17, 23, 0.6)",
+          backdropFilter: "blur(12px)",
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
           pointerEvents: "auto",
+          flexShrink: 0,
         }}>
-          <div style={{
-            width: 28, height: 28, borderRadius: 6,
-            background: "#6366F1",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 14, fontWeight: 800, color: "#fff",
-          }}>
-            C
-          </div>
+          <CraneLogo size={32} />
           <span style={{
-            fontSize: 16, fontWeight: 600, color: "#ffffff",
-            letterSpacing: "-0.02em",
+            fontSize: 17, fontWeight: 600, color: "#ffffff",
+            letterSpacing: "-0.02em", marginLeft: 12,
           }}>
             ConstructIQ
           </span>

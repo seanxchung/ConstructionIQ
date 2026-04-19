@@ -26,15 +26,15 @@ function simZoneId(type, x, y) {
 
 function LandingCameraRig() {
   const ORBIT_PERIOD = 60;
-  const RADIUS = 55;
-  const ELEVATION = 28;
+  const RADIUS = 52;
+  const ELEVATION = 30;
 
   useFrame(({ camera, clock }) => {
     const angle = (clock.elapsedTime / ORBIT_PERIOD) * Math.PI * 2;
     camera.position.x = 15 + Math.cos(angle) * RADIUS;
     camera.position.z = 15 + Math.sin(angle) * RADIUS;
     camera.position.y = ELEVATION;
-    camera.lookAt(15, 0, 15);
+    camera.lookAt(15, 4, 15);
   });
 
   return null;
@@ -362,7 +362,7 @@ export default function SiteScene3D({
   return (
     <Canvas
       camera={{
-        position: landingMode ? [70, 28, 70] : [50, 45, 50],
+        position: landingMode ? [67, 30, 67] : [50, 45, 50],
         fov: 50,
       }}
       style={{

@@ -113,7 +113,7 @@ export default function Truck({ truck, blockedRoadCells }) {
 
     const dx = x1 - x0;
     const dz = z1 - z0;
-    const rot = Math.atan2(dx, dz);
+    const rot = Math.atan2(dx, dz) + Math.PI;
 
     const blockedIdx = path.findIndex((ci) => blockedRoadCells.has(ci));
     const pathPos = Math.min(Math.floor(p * path.length), path.length - 1);

@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import { supabase } from "./auth";
 import SiteScene3D from "./components/SiteScene3D/SiteScene3D";
 import Landing from "./components/Landing/Landing";
+import CraneLogo from "./components/CraneLogo";
 import ScenariosView from "./components/Scenarios/ScenariosView";
 import { generateScenarioTree } from "./components/Scenarios/scenarioGeneration";
 import UploadBriefModal from "./components/Configure/UploadBriefModal";
@@ -81,7 +82,7 @@ const DEFAULT_CONFIG = {
     { id: "finishing", name: "Finishing", startDay: 76, endDay: 88, color: "#22c55e" },
     { id: "closeout", name: "Closeout", startDay: 89, endDay: 90, color: "#ef4444" },
   ],
-  cranes: [],
+  cranes: [], // shape: {id, gridX, gridY, type, arrivalDay, departureDay, entryRoad, notes}
   deliveries: [],
   workforce: {
     "site-prep": { total: 10, laborers: 8, operators: 2 },
@@ -93,6 +94,231 @@ const DEFAULT_CONFIG = {
   },
   equipment: [],
   milestones: [],
+  buildings: [],
+  workerZones: [],
+  materialZones: [],
+  roads: [],
+  offices: [],
+  parking: [],
+  fences: [],
+  manlifts: [],
+  deliveryZones: [],
+  truckStaging: [],
+  boundaries: [],
+};
+
+/* ─── configToCells: derive cells[] from projectConfig ─── */
+
+const ZONE_KEY_TO_ID = {
+  buildings: "building",
+  workerZones: "workers",
+  materialZones: "materials",
+  roads: "road",
+  offices: "office",
+  parking: "parking",
+  fences: "fence",
+  manlifts: "manlift",
+  deliveryZones: "delivery",
+  truckStaging: "truck_staging",
+  boundaries: "boundary",
+  cranes: "crane",
+};
+
+const configToCells = (config) => {
+  const cells = Array(GRID * GRID).fill(null);
+  if (!config) return cells;
+
+  const categories = [
+    "boundaries", "roads", "fences",
+    "buildings", "cranes", "workerZones", "materialZones",
+    "offices", "parking", "manlifts", "deliveryZones", "truckStaging",
+  ];
+
+  for (const key of categories) {
+    const entries = config[key] || [];
+    const zoneId = ZONE_KEY_TO_ID[key];
+    const zoneDef = ZONES.find((z) => z.id === zoneId);
+    if (!zoneDef) continue;
+    const defaultSize = ZONE_SIZES[zoneId];
+
+    for (const entry of entries) {
+      const ox = entry.gridX;
+      const oy = entry.gridY;
+      const w = entry.width || defaultSize.w;
+      const h = entry.height || defaultSize.h;
+      if (ox < 0 || oy < 0 || ox + w > GRID || oy + h > GRID) continue;
+
+      let blocked = false;
+      for (let dy = 0; dy < h && !blocked; dy++) {
+        for (let dx = 0; dx < w && !blocked; dx++) {
+          if (cells[(oy + dy) * GRID + (ox + dx)] !== null) blocked = true;
+        }
+      }
+      if (blocked) continue;
+
+      const originIdx = oy * GRID + ox;
+      const origin = { ...zoneDef, width: w, height: h, isOrigin: true };
+      if (zoneId === "building") {
+        origin.floors = entry.floors ?? 5;
+        origin.buildingType = entry.buildingType ?? "office";
+      }
+      origin.configId = entry.id;
+      cells[originIdx] = origin;
+
+      for (let dy = 0; dy < h; dy++) {
+        for (let dx = 0; dx < w; dx++) {
+          const ti = (oy + dy) * GRID + (ox + dx);
+          if (ti !== originIdx) cells[ti] = { ref: originIdx, id: zoneId };
+        }
+      }
+    }
+  }
+
+  return cells;
+};
+
+/* ─── config mutation helpers (pure) ─── */
+
+const ZONE_ID_TO_KEY = Object.fromEntries(
+  Object.entries(ZONE_KEY_TO_ID).map(([k, v]) => [v, k])
+);
+
+const makeZoneId = (zoneId) =>
+  `${zoneId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+const addZoneToConfig = (config, zoneId, gridX, gridY) => {
+  const key = ZONE_ID_TO_KEY[zoneId];
+  if (!key) return config;
+  const size = ZONE_SIZES[zoneId];
+  const w = size.w;
+  const h = size.h;
+
+  if (gridX < 0 || gridY < 0 || gridX + w > GRID || gridY + h > GRID) return config;
+
+  const currentCells = configToCells(config);
+  for (let dy = 0; dy < h; dy++) {
+    for (let dx = 0; dx < w; dx++) {
+      if (currentCells[(gridY + dy) * GRID + (gridX + dx)] !== null) return config;
+    }
+  }
+
+  const entry = { id: makeZoneId(zoneId), gridX, gridY };
+  if (w > 1 || h > 1) { entry.width = w; entry.height = h; }
+  if (zoneId === "building") { entry.floors = 5; entry.buildingType = "office"; }
+  if (zoneId === "crane") {
+    entry.type = "Tower Crane";
+    entry.arrivalDay = 1;
+    entry.departureDay = 90;
+    entry.entryRoad = "";
+    entry.notes = "";
+  }
+
+  return { ...config, [key]: [...(config[key] || []), entry] };
+};
+
+const removeZoneFromConfig = (config, configId) => {
+  const next = { ...config };
+  for (const key of Object.values(ZONE_ID_TO_KEY)) {
+    if (!next[key]) continue;
+    const filtered = next[key].filter((e) => e.id !== configId);
+    if (filtered.length !== next[key].length) {
+      next[key] = filtered;
+      return next;
+    }
+  }
+  return config;
+};
+
+const resizeZoneInConfig = (config, configId, newWidth, newHeight) => {
+  const next = { ...config };
+  for (const key of Object.values(ZONE_ID_TO_KEY)) {
+    if (!next[key]) continue;
+    const idx = next[key].findIndex((e) => e.id === configId);
+    if (idx < 0) continue;
+    const entry = next[key][idx];
+    if (entry.gridX + newWidth > GRID || entry.gridY + newHeight > GRID) return config;
+    const configWithoutThis = { ...next, [key]: next[key].filter((_, i) => i !== idx) };
+    const otherCells = configToCells(configWithoutThis);
+    for (let dy = 0; dy < newHeight; dy++) {
+      for (let dx = 0; dx < newWidth; dx++) {
+        if (otherCells[(entry.gridY + dy) * GRID + (entry.gridX + dx)] !== null) return config;
+      }
+    }
+    const updated = { ...entry, width: newWidth, height: newHeight };
+    next[key] = [...next[key]];
+    next[key][idx] = updated;
+    return next;
+  }
+  return config;
+};
+
+const updateBuildingInConfig = (config, configId, floors, buildingType) => {
+  const buildings = (config.buildings || []).map((b) =>
+    b.id === configId ? { ...b, floors, buildingType } : b
+  );
+  return { ...config, buildings };
+};
+
+const migrateLegacyZones = (legacyZones, legacyConfig) => {
+  const config = {
+    ...DEFAULT_CONFIG,
+    ...legacyConfig,
+    buildings: [],
+    workerZones: [],
+    materialZones: [],
+    roads: [],
+    offices: [],
+    parking: [],
+    fences: [],
+    manlifts: [],
+    deliveryZones: [],
+    truckStaging: [],
+    boundaries: [],
+    cranes: [],
+  };
+
+  const legacyCraneMeta = {};
+  (legacyConfig?.cranes || []).forEach((c) => {
+    if (typeof c.x === "number" && typeof c.y === "number") {
+      legacyCraneMeta[`${c.x}-${c.y}`] = {
+        type: c.type || "Tower Crane",
+        arrivalDay: c.arrivalDay ?? 1,
+        departureDay: c.departureDay ?? 90,
+        entryRoad: c.entryRoad || "",
+        notes: c.notes || "",
+      };
+    }
+  });
+
+  for (const z of (legacyZones || [])) {
+    const key = ZONE_ID_TO_KEY[z.type];
+    if (!key) continue;
+    const entry = {
+      id: makeZoneId(z.type),
+      gridX: z.x,
+      gridY: z.y,
+    };
+    const defaultSize = ZONE_SIZES[z.type];
+    if ((z.width || defaultSize.w) > 1 || (z.height || defaultSize.h) > 1) {
+      entry.width = z.width || defaultSize.w;
+      entry.height = z.height || defaultSize.h;
+    }
+    if (z.type === "building") {
+      entry.floors = z.metadata?.floors ?? 5;
+      entry.buildingType = z.metadata?.buildingType ?? "office";
+    }
+    if (z.type === "crane") {
+      const meta = legacyCraneMeta[`${z.x}-${z.y}`] || {};
+      entry.type = meta.type || "Tower Crane";
+      entry.arrivalDay = meta.arrivalDay ?? 1;
+      entry.departureDay = meta.departureDay ?? 90;
+      entry.entryRoad = meta.entryRoad || "";
+      entry.notes = meta.notes || "";
+    }
+    config[key].push(entry);
+  }
+
+  return config;
 };
 
 const BUILDING_STAGES = [
@@ -114,18 +340,6 @@ const simZoneId = (type, x, y) => `${type}-${x}-${y}`;
 const _parseDayList = (s) => {
   if (!s) return [];
   return s.split(",").map((d) => parseInt(d.trim(), 10)).filter((d) => !isNaN(d));
-};
-
-const _parseBuildingSpec = (desc) => {
-  const s = (desc || "").toLowerCase();
-  let floors = 5;
-  const m = s.match(/(\d+)[\s-]?(?:stor(?:y|ies)|floor)/);
-  if (m) floors = Math.max(1, Math.min(50, parseInt(m[1], 10)));
-  let buildingType = "office";
-  if (/data\s*cent(?:er|re)/.test(s)) buildingType = "data_center";
-  else if (/warehouse|distribution/.test(s)) buildingType = "warehouse";
-  else if (/residential|apartment|condo|housing/.test(s)) buildingType = "residential";
-  return { floors, buildingType };
 };
 
 const _findRoadPath = (cells, fromIdx, toIdx) => {
@@ -199,7 +413,6 @@ export default function Home() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [activeTool, setActiveTool] = useState(null);
-  const [cells, setCells] = useState(Array(GRID * GRID).fill(null));
   const [day, setDay] = useState(1);
   const [isPlaying, setIsPlaying] = useState(false);
   const [messages, setMessages] = useState([...INITIAL_MESSAGES]);
@@ -213,14 +426,9 @@ export default function Home() {
   const [simulationState, setSimulationState] = useState(null);
   const [buildProgressState, setBuildProgressState] = useState(null);
   const [simConflicts, setSimConflicts] = useState([]);
-  const [optimizerOpen, setOptimizerOpen] = useState(false);
-  const [optimizerLoading, setOptimizerLoading] = useState(false);
-  const [optimizerResult, setOptimizerResult] = useState(null);
-
   const [projectsModalOpen, setProjectsModalOpen] = useState(false);
   const [savedProjects, setSavedProjects] = useState([]);
   const [projectNameInput, setProjectNameInput] = useState("");
-  const [optimizerWorkers, setOptimizerWorkers] = useState(0);
   const [projectConfig, setProjectConfig] = useState(null);
   const [savedConfig, setSavedConfig] = useState(() => {
     if (typeof window === "undefined") return DEFAULT_CONFIG;
@@ -234,6 +442,11 @@ export default function Home() {
     return DEFAULT_CONFIG;
   });
   const [configErrorCount, setConfigErrorCount] = useState(0);
+  const [validationIssues, setValidationIssues] = useState([]);
+  const [buildOutcome, setBuildOutcome] = useState({
+    stallDays: 0, delayedDays: 0, daysOnTrack: 0,
+    finalBuildPct: 0, finalStatus: null, stallEvents: [], worstBlocker: null,
+  });
   const [uploadBriefModalOpen, setUploadBriefModalOpen] = useState(false);
   const [activeTrucks, setActiveTrucks] = useState([]);
   const [view3D, setView3D] = useState(false);
@@ -260,6 +473,9 @@ export default function Home() {
   const [scenarioPlaybackDay, setScenarioPlaybackDay] = useState(null);
   const [scenarioPlaybackPlaying, setScenarioPlaybackPlaying] = useState(false);
   const scenarioAbortRef = useRef(null);
+
+  const cells = useMemo(() => configToCells(projectConfig || savedConfig), [projectConfig, savedConfig]);
+  console.log("[REFACTOR P2] cells derived from config — origin count:", cells.filter((c) => c?.isOrigin).length);
 
   const triggerAlert = () => {
     setHasNewAlert(true);
@@ -339,6 +555,23 @@ export default function Home() {
             data.build_progress.current_status,
             data.build_progress.current_blockers,
           );
+          const _bpStatus = data.build_progress.current_status;
+          const _bpBlockers = data.build_progress.current_blockers || [];
+          setBuildOutcome((prev) => {
+            const nextEvents = [...prev.stallEvents];
+            if (_bpStatus === "stalled" && prev.finalStatus !== "stalled") {
+              nextEvents.push({ day, blocker: _bpBlockers[0] || "unknown", status: "stalled" });
+            }
+            return {
+              stallDays: prev.stallDays + (_bpStatus === "stalled" ? 1 : 0),
+              delayedDays: prev.delayedDays + (_bpStatus === "delayed" ? 1 : 0),
+              daysOnTrack: prev.daysOnTrack + (_bpStatus === "on_track" ? 1 : 0),
+              finalBuildPct: data.build_progress.build_pct || 0,
+              finalStatus: _bpStatus,
+              stallEvents: nextEvents.slice(-10),
+              worstBlocker: _bpBlockers[0] || prev.worstBlocker,
+            };
+          });
 
           prevBuildStatusRef.current = data.build_progress.current_status;
         }
@@ -485,6 +718,7 @@ export default function Home() {
     setBuildProgressState(null);
     setSimConflicts([]);
     setActiveTrucks([]);
+    setBuildOutcome({ stallDays: 0, delayedDays: 0, daysOnTrack: 0, finalBuildPct: 0, finalStatus: null, stallEvents: [], worstBlocker: null });
     prevConflictTypesRef.current = new Set();
     prevBuildStatusRef.current = null;
     debriefFiredRef.current = false;
@@ -560,65 +794,24 @@ export default function Home() {
 
     const placeZone = (i) => {
       if (!activeTool) return;
-      
+      const cell = cells[i];
       if (activeTool === 'eraser') {
-        setCells((prev) => {
-          const next = [...prev];
-          const cell = prev[i];
-          if (!cell) return prev;
-          const originIdx = cell.ref !== undefined ? cell.ref : i;
-          const origin = next[originIdx];
-          if (!origin) return prev;
-          if (origin.id === 'boundary') return prev; // protect boundary from eraser
-          next[originIdx] = null;
-          for (let idx = 0; idx < next.length; idx++) {
-            if (next[idx] && next[idx].ref === originIdx) next[idx] = null;
-          }
-          return next;
-        });
+        const originCell = cell?.ref !== undefined ? cells[cell.ref] : cell;
+        if (!originCell || !originCell.isOrigin) return;
+        if (originCell.id === 'boundary') return;
+        if (!originCell.configId) return;
+        setSavedConfig((prev) => removeZoneFromConfig(prev, originCell.configId));
         return;
       }
-    setCells((prev) => {
-      const next = [...prev];
-      const zone = ZONES.find((z) => z.id === activeTool);
-      const { w, h } = ZONE_SIZES[activeTool];
+      if (cell && cell.isOrigin && cell.id === activeTool && cell.configId) {
+        setSavedConfig((prev) => removeZoneFromConfig(prev, cell.configId));
+        return;
+      }
+      if (cell && cell.isOrigin && cell.id === 'boundary' && activeTool !== 'boundary') return;
       const cx = i % GRID;
       const cy = Math.floor(i / GRID);
-
-      const existing = prev[i];
-
-      if (existing && existing.isOrigin && existing.id === "boundary" && activeTool !== "boundary") {
-        return prev;
-      }
-
-      if (existing && existing.isOrigin && existing.id === activeTool) {
-        next[i] = null;
-        for (let idx = 0; idx < next.length; idx++) {
-          if (next[idx] && next[idx].ref === i) next[idx] = null;
-        }
-        return next;
-      }
-
-      if (cx + w > GRID || cy + h > GRID) return prev;
-      for (let dy = 0; dy < h; dy++) {
-        for (let dx = 0; dx < w; dx++) {
-          const ti = (cy + dy) * GRID + (cx + dx);
-          if (prev[ti] !== null) return prev;
-        }
-      }
-
-      const origin = { ...zone, width: w, height: h, isOrigin: true };
-      if (zone.id === "building") { origin.floors = 5; origin.buildingType = "office"; }
-      next[i] = origin;
-      for (let dy = 0; dy < h; dy++) {
-        for (let dx = 0; dx < w; dx++) {
-          const ti = (cy + dy) * GRID + (cx + dx);
-          if (ti !== i) next[ti] = { ref: i, id: zone.id };
-        }
-      }
-      return next;
-    });
-  };
+      setSavedConfig((prev) => addZoneToConfig(prev, activeTool, cx, cy));
+    };
 
   const sendMessage = async (overrideText) => {
     const text = (overrideText || draft).trim();
@@ -630,7 +823,7 @@ export default function Home() {
       const res = await fetch(`${API_BASE}/api/ai/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, day, zones: buildZones(), project_duration: projectDuration, current_conflicts: simConflicts }),
+        body: JSON.stringify({ message: text, day, zones: buildZones(), project_duration: projectDuration, current_conflicts: simConflicts, validation_issues: validationIssues }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -662,9 +855,9 @@ export default function Home() {
     setAnalytics([]);
     setSimulationState(null);
     setBuildProgressState(null);
-
     setSimConflicts([]);
     setActiveTrucks([]);
+    setBuildOutcome({ stallDays: 0, delayedDays: 0, daysOnTrack: 0, finalBuildPct: 0, finalStatus: null, stallEvents: [], worstBlocker: null });
     prevConflictTypesRef.current = new Set();
     prevPhaseRef.current = "";
     prevBuildStatusRef.current = null;
@@ -704,7 +897,45 @@ export default function Home() {
     const peakWorkers = Math.max(0, ...data.map(a => a.totalWorkers));
     const totalCost = data.reduce((s, a) => s + a.costImpact, 0);
     const highestRiskDay = data.length > 0 ? data.reduce((best, a) => a.costImpact > (best.costImpact || 0) ? a : best, data[0]).day : 0;
-    const debriefPrompt = "The " + projectDuration + "-day simulation has completed. Generate a comprehensive project debrief. DATA: " + totalConflicts + " total conflicts, " + peakWorkers + " peak workers, $" + totalCost.toLocaleString() + " total cost exposure, highest risk day was Day " + highestRiskDay + ". Structure your response with these sections: 1. SCHEDULE OUTCOME - Did the project finish on time or overrun? If overrun by how many days at $15,000/day overhead? 2. BY THE NUMBERS - Summarize the key metrics. 3. WHAT WENT WELL - 2-3 things that worked. 4. WHAT WENT WRONG - Top 3 problems with specific day numbers and dollar figures. 5. RECOMMENDATIONS - 3-4 specific actionable changes for the next run referencing actual zone positions and days. 6. BOTTOM LINE - One sentence: greenlight this plan or iterate? Keep tone direct and experienced.";
+
+    const projectFinished = buildOutcome.finalBuildPct >= 95;
+    const scheduleOutcome = projectFinished
+      ? (buildOutcome.stallDays === 0 ? "finished_on_time"
+        : buildOutcome.stallDays < 5 ? "finished_late_minor"
+        : "finished_late_major")
+      : "did_not_finish";
+
+    const stallEventStr = buildOutcome.stallEvents.length > 0
+      ? buildOutcome.stallEvents.map(e => `Day ${e.day} (${e.blocker})`).join("; ")
+      : "none";
+
+    const debriefPrompt = `The ${projectDuration}-day simulation has completed. Generate a project debrief based on ACTUAL data from the run.
+
+GROUND TRUTH (do not contradict these facts):
+- Build completion: ${buildOutcome.finalBuildPct.toFixed(0)}% of target
+- Schedule outcome: ${scheduleOutcome}
+- Days stalled: ${buildOutcome.stallDays}
+- Days delayed: ${buildOutcome.delayedDays}
+- Days on track: ${buildOutcome.daysOnTrack}
+- Final status: ${buildOutcome.finalStatus || "unknown"}
+- Top recurring blocker: ${buildOutcome.worstBlocker || "none recorded"}
+- Stall events: ${stallEventStr}
+
+AGGREGATE METRICS:
+- ${totalConflicts} total conflicts logged
+- ${peakWorkers} peak concurrent workers
+- $${totalCost.toLocaleString()} total cost exposure
+- Highest risk day: Day ${highestRiskDay}
+
+Structure your debrief with these sections:
+1. SCHEDULE OUTCOME — Start with whether the project finished on schedule, late, or did not complete. If stalled or delayed days > 0, you MUST acknowledge this. If scheduleOutcome is "finished_late_major" or "did_not_finish", calculate estimated overrun cost at $15,000/day overhead for stall days.
+2. BY THE NUMBERS — Summarize actual metrics above.
+3. WHAT WENT WELL — 2-3 specific things. If the project stalled, be honest — don't invent wins.
+4. WHAT WENT WRONG — Top 3 problems with specific day numbers and dollar figures from the stall events and cost data above.
+5. RECOMMENDATIONS — 3-4 specific changes referencing actual blockers. If worst blocker was crew-related, recommend workforce changes; if material, recommend delivery changes; etc.
+6. BOTTOM LINE — One sentence verdict: "greenlight" ONLY if scheduleOutcome is "finished_on_time" AND total cost < $50,000. Otherwise "iterate" with the primary reason.
+
+Be direct and data-grounded. Do not claim success if the numbers above show stalls. Do not invent specifics the data does not support.`;
     setMessages(function(m) { return [...m, { role: "divider", text: "Project Debrief" }]; });
     fetch(API_BASE + "/api/ai/chat", {
       method: "POST",
@@ -750,6 +981,23 @@ export default function Home() {
               data.build_progress.current_status,
               data.build_progress.current_blockers,
             );
+            const _bpStatus = data.build_progress.current_status;
+            const _bpBlockers = data.build_progress.current_blockers || [];
+            setBuildOutcome((prev) => {
+              const nextEvents = [...prev.stallEvents];
+              if (_bpStatus === "stalled" && prev.finalStatus !== "stalled") {
+                nextEvents.push({ day: target, blocker: _bpBlockers[0] || "unknown", status: "stalled" });
+              }
+              return {
+                stallDays: prev.stallDays + (_bpStatus === "stalled" ? 1 : 0),
+                delayedDays: prev.delayedDays + (_bpStatus === "delayed" ? 1 : 0),
+                daysOnTrack: prev.daysOnTrack + (_bpStatus === "on_track" ? 1 : 0),
+                finalBuildPct: data.build_progress.build_pct || 0,
+                finalStatus: _bpStatus,
+                stallEvents: nextEvents.slice(-10),
+                worstBlocker: _bpBlockers[0] || prev.worstBlocker,
+              };
+            });
             prevBuildStatusRef.current = data.build_progress.current_status;
           }
           setSimConflicts(data.conflicts || []);
@@ -811,7 +1059,13 @@ export default function Home() {
   };
 
   const clearSite = () => {
-    setCells(Array(GRID * GRID).fill(null));
+    setSavedConfig((prev) => {
+      const cleared = { ...prev };
+      for (const key of Object.values(ZONE_ID_TO_KEY)) {
+        cleared[key] = [];
+      }
+      return cleared;
+    });
     setIsPlaying(false);
     setDay(1);
     setAnalytics([]);
@@ -819,8 +1073,29 @@ export default function Home() {
     setSimulationState(null);
     setBuildProgressState(null);
     setSimConflicts([]);
-    setOptimizerWorkers(0);
     setActiveTrucks([]);
+    setBuildOutcome({ stallDays: 0, delayedDays: 0, daysOnTrack: 0, finalBuildPct: 0, finalStatus: null, stallEvents: [], worstBlocker: null });
+    prevConflictTypesRef.current = new Set();
+    prevPhaseRef.current = "";
+    prevBuildStatusRef.current = null;
+    debriefFiredRef.current = false;
+    clearScenarioState();
+  };
+
+  const newProject = () => {
+    if (!confirm("Start a new project? This will clear everything — site plan, schedule, and configuration.")) return;
+    setSavedConfig({ ...DEFAULT_CONFIG });
+    setProjectConfig({ ...DEFAULT_CONFIG });
+    setProjectDuration(DEFAULT_DURATION);
+    setIsPlaying(false);
+    setDay(1);
+    setAnalytics([]);
+    setMessages([...INITIAL_MESSAGES]);
+    setSimulationState(null);
+    setBuildProgressState(null);
+    setSimConflicts([]);
+    setActiveTrucks([]);
+    setBuildOutcome({ stallDays: 0, delayedDays: 0, daysOnTrack: 0, finalBuildPct: 0, finalStatus: null, stallEvents: [], worstBlocker: null });
     prevConflictTypesRef.current = new Set();
     prevPhaseRef.current = "";
     prevBuildStatusRef.current = null;
@@ -841,120 +1116,14 @@ export default function Home() {
     newH = Math.min(newH, GRID - oy);
     if (newW === origW && newH === origH && !dragRef.current._dirty) return;
 
-    setCells((prev) => {
-      const origin = prev[originIndex];
-      if (!origin || !origin.isOrigin) return prev;
-      const next = [...prev];
-      for (let idx = 0; idx < next.length; idx++) {
-        if (next[idx] && next[idx].ref === originIndex) next[idx] = null;
-      }
-      for (let dy = 0; dy < newH; dy++) {
-        for (let dx = 0; dx < newW; dx++) {
-          const ti = (oy + dy) * GRID + (ox + dx);
-          if (ti === originIndex) continue;
-          if (next[ti] !== null && !(next[ti].ref === originIndex)) return prev;
-        }
-      }
-      next[originIndex] = { ...origin, width: newW, height: newH };
-      for (let dy = 0; dy < newH; dy++) {
-        for (let dx = 0; dx < newW; dx++) {
-          const ti = (oy + dy) * GRID + (ox + dx);
-          if (ti !== originIndex) next[ti] = { ref: originIndex, id: origin.id };
-        }
-      }
-      return next;
-    });
+    const originCell = cells[originIndex];
+    if (!originCell || !originCell.isOrigin || !originCell.configId) return;
+    setSavedConfig((prev) => resizeZoneInConfig(prev, originCell.configId, newW, newH));
     dragRef.current._dirty = true;
   };
 
   const handleResizeUp = () => {
     dragRef.current = null;
-  };
-
-  const runOptimizer = async (formData) => {
-    setOptimizerLoading(true);
-    setOptimizerResult(null);
-    try {
-      const res = await fetch(`${API_BASE}/api/ai/optimize`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          building_description: formData.description,
-          num_cranes: formData.cranes,
-          num_workers: formData.workers,
-          num_material_zones: formData.materials,
-          project_duration: projectDuration,
-          grid_size: GRID,
-        }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const zones = data.zones || [];
-      const buildingSpec = _parseBuildingSpec(formData.description);
-
-      const next = Array(GRID * GRID).fill(null);
-      zones.forEach((z) => {
-        const zone = ZONES.find((def) => def.id === z.type);
-        if (!zone) return;
-        const { w, h } = ZONE_SIZES[z.type];
-        const ox = z.x, oy = z.y;
-        const idx = oy * GRID + ox;
-        if (idx < 0 || ox + w > GRID || oy + h > GRID) return;
-        let blocked = false;
-        for (let dy = 0; dy < h && !blocked; dy++)
-          for (let dx = 0; dx < w && !blocked; dx++)
-            if (next[(oy + dy) * GRID + (ox + dx)] !== null) blocked = true;
-        if (blocked) return;
-        const origin = { ...zone, width: w, height: h, isOrigin: true };
-        if (zone.id === "building") Object.assign(origin, buildingSpec);
-        next[idx] = origin;
-        for (let dy = 0; dy < h; dy++)
-          for (let dx = 0; dx < w; dx++) {
-            const ti = (oy + dy) * GRID + (ox + dx);
-            if (ti !== idx) next[ti] = { ref: idx, id: zone.id };
-          }
-      });
-
-      cells.forEach((c, i) => {
-        if (!c?.isOrigin || (c.id !== "boundary" && c.id !== "fence")) return;
-        next[i] = c;
-        for (let idx = 0; idx < cells.length; idx++) {
-          if (cells[idx] && cells[idx].ref === i) next[idx] = cells[idx];
-        }
-      });
-
-      setCells(next);
-      setIsPlaying(false);
-      setDay(1);
-      setAnalytics([]);
-      setSimulationState(null);
-      setBuildProgressState(null);
-      setSimConflicts([]);
-      setOptimizerWorkers(formData.workers);
-      setActiveTrucks([]);
-      prevBuildStatusRef.current = null;
-      clearScenarioState();
-
-      const typeCounts = {};
-      next.forEach((c) => { if (c?.isOrigin) typeCounts[c.id] = (typeCounts[c.id] || 0) + 1; });
-      const parts = [];
-      if (typeCounts.crane) parts.push(`${typeCounts.crane} crane${typeCounts.crane !== 1 ? "s" : ""}`);
-      if (typeCounts.workers) parts.push(`${typeCounts.workers} worker zone${typeCounts.workers !== 1 ? "s" : ""} (${formData.workers} workers)`);
-      if (typeCounts.materials) parts.push(`${typeCounts.materials} material zone${typeCounts.materials !== 1 ? "s" : ""}`);
-      if (typeCounts.building) parts.push(`${typeCounts.building} building tile${typeCounts.building !== 1 ? "s" : ""}`);
-      if (typeCounts.road) parts.push(`${typeCounts.road} access road${typeCounts.road !== 1 ? "s" : ""}`);
-      const breakdown = parts.join(", ");
-
-      setOptimizerResult({ success: true, breakdown, reasoning: data.reasoning || "" });
-      setMessages((m) => [
-        ...m,
-        { role: "ai", text: `Layout generated: ${breakdown} placed based on construction best practices. ${data.reasoning || ""}` },
-      ]);
-    } catch {
-      setOptimizerResult({ success: false, error: "Failed to generate layout. Check that the backend is running." });
-    } finally {
-      setOptimizerLoading(false);
-    }
   };
 
   const fetchProjects = async () => {
@@ -968,16 +1137,26 @@ export default function Home() {
     const name = projectNameInput.trim();
     if (!name) return;
     try {
+      const zones = buildZones();
+      const payload = { name, zones, project_duration: projectDuration, config: savedConfig };
+      console.log("[SAVE] payload zones:", zones.length, "config keys:", Object.keys(savedConfig));
       const res = await fetch(`${API_BASE}/api/projects/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, zones: buildZones(), project_duration: projectDuration, config: savedConfig }),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         setProjectNameInput("");
         await fetchProjects();
+        setProjectsModalOpen(false);
+        setMessages((m) => [...m, { role: "ai", text: `Project "${name}" saved successfully.` }]);
+      } else {
+        const errText = await res.text();
+        console.error("[SAVE] server error:", res.status, errText);
       }
-    } catch {}
+    } catch (err) {
+      console.error("[SAVE] fetch error:", err);
+    }
   };
 
   const loadProject = async (project) => {
@@ -989,38 +1168,14 @@ export default function Home() {
       });
       if (!res.ok) return;
       const data = await res.json();
-      const next = Array(GRID * GRID).fill(null);
-      (data.zones || []).forEach((z) => {
-        const zone = ZONES.find((def) => def.id === z.type);
-        if (!zone) return;
-        const { w, h } = ZONE_SIZES[z.type];
-        const ox = z.x, oy = z.y;
-        const idx = oy * GRID + ox;
-        if (idx < 0 || ox + w > GRID || oy + h > GRID) return;
-        let blocked = false;
-        for (let dy = 0; dy < h && !blocked; dy++)
-          for (let dx = 0; dx < w && !blocked; dx++)
-            if (next[(oy + dy) * GRID + (ox + dx)] !== null) blocked = true;
-        if (blocked) return;
-        const origin = { ...zone, width: w, height: h, isOrigin: true };
-        if (zone.id === "building") {
-          origin.floors = z.metadata?.floors ?? 5;
-          origin.buildingType = z.metadata?.buildingType ?? "office";
-        }
-        next[idx] = origin;
-        for (let dy = 0; dy < h; dy++)
-          for (let dx = 0; dx < w; dx++) {
-            const ti = (oy + dy) * GRID + (ox + dx);
-            if (ti !== idx) next[ti] = { ref: idx, id: zone.id };
-          }
-      });
-      setCells(next);
-      if (data.project_duration) setProjectDuration(data.project_duration);
-      const loadedConfig = data.config && typeof data.config === "object" && data.config.phases
+      const hasNewShapeConfig = data.config && Array.isArray(data.config.buildings);
+      const migratedConfig = hasNewShapeConfig
         ? data.config
-        : DEFAULT_CONFIG;
-      setSavedConfig(loadedConfig);
-      setProjectConfig(loadedConfig);
+        : migrateLegacyZones(data.zones || [], data.config || DEFAULT_CONFIG);
+      console.log("[REFACTOR P3] loadProject — hasNewShapeConfig:", hasNewShapeConfig, "— buildings count:", migratedConfig.buildings?.length || 0, "— cranes count:", migratedConfig.cranes?.length || 0);
+      setSavedConfig(migratedConfig);
+      setProjectConfig(migratedConfig);
+      if (data.project_duration) setProjectDuration(data.project_duration);
       setIsPlaying(false);
       setDay(1);
       setAnalytics([]);
@@ -1028,8 +1183,8 @@ export default function Home() {
       setBuildProgressState(null);
       setSimConflicts([]);
       setProjectsModalOpen(false);
-      setOptimizerWorkers(0);
       setActiveTrucks([]);
+      setBuildOutcome({ stallDays: 0, delayedDays: 0, daysOnTrack: 0, finalBuildPct: 0, finalStatus: null, stallEvents: [], worstBlocker: null });
       prevBuildStatusRef.current = null;
       clearScenarioState();
       setMessages((m) => [
@@ -1047,15 +1202,37 @@ export default function Home() {
   };
 
   const handleApplyBriefConfig = (newConfig) => {
-    setSavedConfig(newConfig);
-    setProjectConfig(newConfig);
+    const spatialKeys = ["buildings", "workerZones", "materialZones", "roads", "offices", "parking", "fences", "manlifts", "deliveryZones", "truckStaging", "boundaries", "cranes"];
+    const safeConfig = { ...DEFAULT_CONFIG, ...newConfig };
+    for (const key of spatialKeys) {
+      if (!Array.isArray(safeConfig[key])) safeConfig[key] = [];
+    }
+    // Derive project duration from phases if available
+    const maxEndDay = (safeConfig.phases || []).reduce((max, p) => Math.max(max, p.endDay || 0), 0);
+    if (maxEndDay > 0) setProjectDuration(maxEndDay);
+
+    setSavedConfig(safeConfig);
+    setProjectConfig(safeConfig);
+    setIsPlaying(false);
+    setDay(1);
+    setAnalytics([]);
+    setSimulationState(null);
+    setBuildProgressState(null);
+    setSimConflicts([]);
+    setActiveTrucks([]);
+    setBuildOutcome({ stallDays: 0, delayedDays: 0, daysOnTrack: 0, finalBuildPct: 0, finalStatus: null, stallEvents: [], worstBlocker: null });
+    prevBuildStatusRef.current = null;
+    debriefFiredRef.current = false;
+    clearScenarioState();
+    const zoneCount = spatialKeys.reduce((sum, key) => sum + (safeConfig[key]?.length || 0), 0);
     setMessages((m) => [
       ...m,
       {
         role: "ai",
-        text: "Configuration loaded from project brief. Review the Configure tab and place your zones on the Site Plan.",
+        text: `**Brief imported.** ${zoneCount} zones placed automatically based on your project spec. Review the site plan and adjust as needed. Configure tab has your phases, workforce, and deliveries.`,
       },
     ]);
+    console.log("[PDF-UPLOAD] Applied config with zone count:", zoneCount);
   };
 
   const progress = ((day - 1) / (projectDuration - 1)) * 100;
@@ -1181,13 +1358,12 @@ export default function Home() {
       {/* ════════ TOP NAV ════════ */}
       <nav style={S.nav}>
         <div style={S.navLeft}>
-          <div style={S.logoBox}>C</div>
+          <CraneLogo size={32} />
           <span style={S.logoText}>ConstructIQ</span>
           <span style={S.badge}>Beta</span>
         </div>
         <div style={S.navCenter}>
           <NavTab label="SITE PLAN" active={activeTab === "site"} onClick={() => setActiveTab("site")} />
-          <NavTab label="SCENARIOS" active={activeTab === "scenarios"} onClick={() => setActiveTab("scenarios")} />
           <NavTab label="SCHEDULE" active={activeTab === "schedule"} onClick={() => setActiveTab("schedule")} />
           <NavTab label="ANALYTICS" active={activeTab === "analytics"} onClick={() => setActiveTab("analytics")} />
           <NavTab label="CONFIGURE" active={activeTab === "configure"} onClick={() => setActiveTab("configure")} badge={configErrorCount} />
@@ -1303,10 +1479,10 @@ export default function Home() {
               Clear Site
             </button>
             <button
-              onClick={() => { setOptimizerOpen(true); setOptimizerResult(null); }}
-              style={{ ...S.toolBtn, color: "#8B8FA3" }}
+              onClick={newProject}
+              style={{ ...S.toolBtn, color: "#ef4444" }}
             >
-              AI Optimize
+              New Project
             </button>
             <button
               onClick={() => setProjectsModalOpen(true)}
@@ -1535,7 +1711,7 @@ export default function Home() {
 
                     } else if (cell?.id === "workers") {
                       const numWZ = cells.filter((c) => c?.isOrigin && c.id === "workers").length;
-                      const wCount = simulationState ? (workersByZone[simZoneId('workers', cx, cy)]?.count || 0) : (numWZ > 0 && optimizerWorkers > 0 ? Math.round(optimizerWorkers / numWZ) : 25);
+                      const wCount = simulationState ? (workersByZone[simZoneId('workers', cx, cy)]?.count || 0) : 25;
                       cellBg = cell.color + "12";
                       cellBorderR = `1px solid ${cell.color}30`;
                       cellBorderB = `1px solid ${cell.color}30`;
@@ -1871,7 +2047,7 @@ export default function Home() {
           ) : activeTab === "schedule" ? (
             <ScheduleView analytics={analytics} day={day} currentPhase={currentPhase} projectDuration={projectDuration} ganttPhases={ganttPhases} />
           ) : activeTab === "configure" ? (
-            <ConfigurePanel cells={cells} projectDuration={projectDuration} onConfigSave={setProjectConfig} onValidationChange={setConfigErrorCount} config={savedConfig} onConfigChange={setSavedConfig} onUploadBrief={() => setUploadBriefModalOpen(true)} />
+            <ConfigurePanel cells={cells} projectDuration={projectDuration} onConfigSave={setProjectConfig} onValidationChange={setConfigErrorCount} onValidationIssuesChange={setValidationIssues} config={savedConfig} onConfigChange={setSavedConfig} onUploadBrief={() => setUploadBriefModalOpen(true)} />
           ) : (
             <AnalyticsDashboard analytics={analytics} />
           )}
@@ -2007,7 +2183,7 @@ export default function Home() {
         }}>
           {/* Chat Header */}
           <div style={S.chatHeader}>
-            <div style={S.avatar}>MC</div>
+            <img src="/mike-callahan.png" alt="MC" style={S.avatar} />
             <div>
               <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0" }}>
                 Mike Callahan
@@ -2114,23 +2290,13 @@ export default function Home() {
           originIdx={buildingEditIdx}
           cell={cells[buildingEditIdx]}
           onSave={(floors, buildingType) => {
-            setCells((prev) => {
-              const next = [...prev];
-              next[buildingEditIdx] = { ...prev[buildingEditIdx], floors, buildingType };
-              return next;
-            });
+            const cell = cells[buildingEditIdx];
+            if (cell?.configId) {
+              setSavedConfig((prev) => updateBuildingInConfig(prev, cell.configId, floors, buildingType));
+            }
             setBuildingEditIdx(null);
           }}
           onClose={() => setBuildingEditIdx(null)}
-        />
-      )}
-
-      {optimizerOpen && (
-        <OptimizerModal
-          loading={optimizerLoading}
-          result={optimizerResult}
-          onGenerate={runOptimizer}
-          onClose={() => setOptimizerOpen(false)}
         />
       )}
 
@@ -2293,167 +2459,6 @@ function BuildingEditPopup({ originIdx, cell, onSave, onClose }) {
             Save
           </button>
         </div>
-      </div>
-    </div>
-  );
-}
-
-/* ───────────────────── optimizer modal ───────────────────── */
-
-function OptimizerModal({ loading, result, onGenerate, onClose }) {
-  const [desc, setDesc] = useState("10-story data center");
-  const [cranes, setCranes] = useState(2);
-  const [workers, setWorkers] = useState(40);
-  const [materials, setMaterials] = useState(3);
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    onGenerate({ description: desc, cranes, workers, materials });
-  };
-
-  const inputStyle = {
-    width: "100%",
-    height: 40,
-    padding: "0 12px",
-    borderRadius: 6,
-    background: "#1A1D2B",
-    border: "1px solid rgba(255,255,255,0.06)",
-    color: "#e2e8f0",
-    fontSize: 13,
-    outline: "none",
-    fontFamily: "inherit",
-  };
-
-  const labelStyle = {
-    fontSize: 11,
-    fontWeight: 500,
-    color: "#8B8FA3",
-    marginBottom: 4,
-    display: "block",
-  };
-
-  return (
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed", inset: 0, zIndex: 1000,
-        background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: 460, background: "#0F1117", borderRadius: 10,
-          border: "1px solid rgba(255,255,255,0.06)", boxShadow: "0 24px 80px rgba(0,0,0,0.5)",
-          overflow: "hidden",
-        }}
-      >
-        {/* Header */}
-        <div style={{
-          padding: "20px 24px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)",
-          display: "flex", alignItems: "flex-start", justifyContent: "space-between",
-        }}>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 600, color: "#e2e8f0" }}>
-              AI Layout Optimizer
-            </div>
-            <div style={{ fontSize: 12, color: "#8B8FA3", marginTop: 4, lineHeight: 1.4 }}>
-              Describe your project and available resources. Mike will generate the optimal site layout.
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            style={{
-              background: "none", border: "none", color: "#64748b",
-              fontSize: 18, cursor: "pointer", padding: "2px 6px",
-              borderRadius: 6, lineHeight: 1,
-            }}
-          >
-            {"\u2715"}
-          </button>
-        </div>
-
-        {/* Form */}
-        <form onSubmit={handleSubmit} style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
-          <div>
-            <label style={labelStyle}>What are you building?</label>
-            <input
-              value={desc}
-              onChange={(e) => setDesc(e.target.value)}
-              placeholder="e.g. 10-story data center, warehouse, office building"
-              style={inputStyle}
-              required
-            />
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-            <div>
-              <label style={labelStyle}>Number of cranes</label>
-              <input
-                type="number" min={1} max={6} value={cranes}
-                onChange={(e) => setCranes(Number(e.target.value))}
-                style={inputStyle}
-              />
-            </div>
-            <div>
-              <label style={labelStyle}>Total workers available</label>
-              <input
-                type="number" min={1} max={200} value={workers}
-                onChange={(e) => setWorkers(Number(e.target.value))}
-                style={inputStyle}
-              />
-              <span style={{ fontSize: 10, color: "#475569", marginTop: 3, display: "block" }}>Each worker zone holds up to 25 workers</span>
-            </div>
-            <div>
-              <label style={labelStyle}>Material storage zones</label>
-              <input
-                type="number" min={1} max={8} value={materials}
-                onChange={(e) => setMaterials(Number(e.target.value))}
-                style={inputStyle}
-              />
-            </div>
-          </div>
-
-          {/* Result message */}
-          {result && (
-            <div style={{
-              padding: "10px 14px", borderRadius: 8,
-              background: result.success ? "#16653420" : "#7f1d1d20",
-              border: `1px solid ${result.success ? "#22c55e30" : "#ef444430"}`,
-              fontSize: 12, lineHeight: 1.5,
-              color: result.success ? "#4ade80" : "#fca5a5",
-            }}>
-              {result.success
-                ? `Layout generated: ${result.breakdown} placed based on construction best practices.`
-                : result.error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading || !desc.trim()}
-            style={{
-              height: 44, borderRadius: 8, border: "none",
-              background: loading ? "rgba(255,255,255,0.04)" : "#6366F1",
-              color: "#fff", fontSize: 14, fontWeight: 600,
-              cursor: loading ? "not-allowed" : "pointer",
-              fontFamily: "inherit",
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-              opacity: loading || !desc.trim() ? 0.6 : 1,
-              transition: "all 0.15s",
-            }}
-          >
-            {loading ? (
-              <>
-                <span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #ffffff40", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-                Mike is analyzing your project...
-              </>
-            ) : (
-              "Generate Optimal Layout"
-            )}
-          </button>
-        </form>
       </div>
     </div>
   );
@@ -3215,7 +3220,7 @@ function getValidationIssues(config, cells) {
   return issues;
 }
 
-function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChange, config, onConfigChange, onUploadBrief }) {
+function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChange, onValidationIssuesChange, config, onConfigChange, onUploadBrief }) {
   const [section, setSection] = useState("Phases");
   const [saved, setSaved] = useState(false);
 
@@ -3395,6 +3400,10 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
   useEffect(() => {
     if (onValidationChange) onValidationChange(errorCount);
   }, [errorCount, onValidationChange]);
+
+  useEffect(() => {
+    if (onValidationIssuesChange) onValidationIssuesChange(validationIssues);
+  }, [validationIssues, onValidationIssuesChange]);
 
   return (
     <div style={{ display: "flex", height: "100%", background: "#12141E", overflow: "hidden" }}>
@@ -3895,16 +3904,16 @@ const S = {
   },
 
   nav: {
-    height: 52,
+    height: 56,
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: "0 24px",
+    padding: "0 28px",
     background: "#0F1117",
     borderBottom: "1px solid rgba(255,255,255,0.06)",
     flexShrink: 0,
   },
-  navLeft: { display: "flex", alignItems: "center", gap: 10 },
+  navLeft: { display: "flex", alignItems: "center", gap: 12 },
   logoBox: {
     width: 28,
     height: 28,
@@ -3918,7 +3927,7 @@ const S = {
     color: "#fff",
   },
   logoText: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: 600,
     color: "#ffffff",
     letterSpacing: "-0.02em",
@@ -4161,14 +4170,8 @@ const S = {
     width: 36,
     height: 36,
     borderRadius: 8,
-    background: "#6366F1",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: 12,
-    fontWeight: 700,
-    color: "#fff",
-    letterSpacing: "0.02em",
+    objectFit: "cover",
+    background: "#1A1D2B",
   },
   onlineBadge: {
     display: "none",
@@ -4236,3 +4239,9 @@ const S = {
     flexShrink: 0,
   },
 };
+
+/* ─── Part 2 verification (runs once on module load) ─── */
+if (typeof window !== "undefined" && !window.__CONSTRUCTIQ_REFACTOR_PART_2_VERIFIED) {
+  window.__CONSTRUCTIQ_REFACTOR_PART_2_VERIFIED = true;
+  console.log("[REFACTOR P2] Part 2 loaded. setCells should no longer exist in page.js.");
+}
