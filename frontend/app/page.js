@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import { supabase } from "./auth";
+import SiteScene3D from "./components/SiteScene3D/SiteScene3D";
 
 /* ───────────────────── constants ───────────────────── */
 
@@ -194,6 +195,7 @@ export default function Home() {
   const [hasNewAlert, setHasNewAlert] = useState(false);
   const [projectDuration, setProjectDuration] = useState(DEFAULT_DURATION);
   const [simulationState, setSimulationState] = useState(null);
+  const [buildProgressState, setBuildProgressState] = useState(null);
   const [simConflicts, setSimConflicts] = useState([]);
   const [optimizerOpen, setOptimizerOpen] = useState(false);
   const [optimizerLoading, setOptimizerLoading] = useState(false);
@@ -217,6 +219,7 @@ export default function Home() {
   });
   const [configErrorCount, setConfigErrorCount] = useState(0);
   const [activeTrucks, setActiveTrucks] = useState([]);
+  const [view3D, setView3D] = useState(false);
   const scrollRef = useRef(null);
   const simulatingRef = useRef(false);
   const skipInProgressRef = useRef(false);
@@ -284,6 +287,7 @@ export default function Home() {
       .then((data) => {
         if (data) {
           setSimulationState(data.simulation || null);
+          setBuildProgressState(data.build_progress || null);
           setSimConflicts(data.conflicts || []);
           setAnalytics((prev) => [...prev, {
             day,
@@ -424,6 +428,7 @@ export default function Home() {
     setAnalytics([]);
     setMessages([...INITIAL_MESSAGES]);
     setSimulationState(null);
+    setBuildProgressState(null);
     setSimConflicts([]);
     setActiveTrucks([]);
     prevConflictTypesRef.current = new Set();
@@ -537,6 +542,8 @@ export default function Home() {
     setMessages([...INITIAL_MESSAGES]);
     setAnalytics([]);
     setSimulationState(null);
+    setBuildProgressState(null);
+
     setSimConflicts([]);
     setActiveTrucks([]);
     prevConflictTypesRef.current = new Set();
@@ -582,6 +589,7 @@ export default function Home() {
       .then((data) => {
         if (data) {
           setSimulationState(data.simulation || null);
+          setBuildProgressState(data.build_progress || null);
           setSimConflicts(data.conflicts || []);
           setAnalytics((prev) => [...prev, {
             day: target,
@@ -647,6 +655,7 @@ export default function Home() {
     setAnalytics([]);
     setMessages([...INITIAL_MESSAGES]);
     setSimulationState(null);
+    setBuildProgressState(null);
     setSimConflicts([]);
     setOptimizerWorkers(0);
     setActiveTrucks([]);
@@ -752,6 +761,7 @@ export default function Home() {
       setDay(1);
       setAnalytics([]);
       setSimulationState(null);
+      setBuildProgressState(null);
       setSimConflicts([]);
       setOptimizerWorkers(formData.workers);
       setActiveTrucks([]);
@@ -841,6 +851,7 @@ export default function Home() {
       setDay(1);
       setAnalytics([]);
       setSimulationState(null);
+      setBuildProgressState(null);
       setSimConflicts([]);
       setProjectsModalOpen(false);
       setOptimizerWorkers(0);
@@ -867,8 +878,13 @@ export default function Home() {
   }));
   const currentPhase = [...ganttPhases].reverse().find((gp) => day >= gp.start)?.label ?? "Pre-Construction";
 
-  /* ────────── grid simulation-driven visuals ────────── */
-  const buildPct = (day / projectDuration) * 100;
+   /* ────────── grid simulation-driven visuals ────────── */
+   const buildProgress = buildProgressState;
+   const buildPct = buildProgress
+     ? buildProgress.build_pct
+     : (day / projectDuration) * 100;
+   const buildStatus = buildProgress?.current_status || null;
+   const buildBlockers = buildProgress?.current_blockers || [];
 
   const roadAdjMap = {};
   cells.forEach((c, i) => {
@@ -1058,11 +1074,31 @@ export default function Home() {
               <span style={{ fontSize: 10, fontWeight: 500, color: "#4A4E63", letterSpacing: "0.08em" }}>
                 SITE PLAN — {GRID}x{GRID} GRID
               </span>
-              <span style={{ fontSize: 10, color: "#4A4E63" }}>
-                Phase: <span style={{ color: "#8B8FA3" }}>{currentPhase}</span>
-              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 10, color: "#4A4E63" }}>
+                  Phase: <span style={{ color: "#8B8FA3" }}>{currentPhase}</span>
+                </span>
+                <button
+                  onClick={() => setView3D(!view3D)}
+                  style={{
+                    background: "transparent",
+                    border: "1px solid rgba(255,255,255,0.06)",
+                    color: view3D ? "#6366F1" : "#8B8FA3",
+                    fontSize: 10,
+                    fontWeight: 600,
+                    padding: "4px 10px",
+                    borderRadius: 5,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    letterSpacing: "0.06em",
+                  }}
+                >
+                  {view3D ? "3D VIEW" : "2D VIEW"}
+                </button>
+              </div>
             </div>
 
+            {!view3D && (
             <div style={{ display: "flex" }}>
               {/* Column Labels */}
               <div style={{ width: 24 }} />
@@ -1072,16 +1108,33 @@ export default function Home() {
                 ))}
               </div>
             </div>
+            )}
 
             <div style={{ display: "flex" }}>
               {/* Row Labels */}
+              {!view3D && (
               <div style={S.rowLabelCol}>
                 {rowLabels.map((l) => (
                   <div key={l} style={S.rowLabel}>{l}</div>
                 ))}
               </div>
+              )}
 
-              {/* The Grid */}
+              {/* The Grid (2D) or 3D Scene */}
+              {view3D ? (
+                <div style={{ width: GRID * 34, height: GRID * 34, overflow: "hidden", borderRadius: 6, border: "1px solid rgba(255,255,255,0.04)" }}>
+                  <SiteScene3D
+                    cells={cells}
+                    simulationState={simulationState}
+                    activeTrucks={activeTrucks}
+                    day={day}
+                    projectDuration={projectDuration}
+                    buildPct={buildPct}
+                    blockedRoadCells={blockedRoadCells}
+                    readOnly={false}
+                  />
+                </div>
+              ) : (
               <div style={{ position: "relative" }}>
                 <div
                   ref={gridRef}
@@ -1518,6 +1571,7 @@ export default function Home() {
                   </div>
                 )}
               </div>
+              )}
             </div>
 
             {/* Zone Legend */}

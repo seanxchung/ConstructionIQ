@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 from typing import Any, Optional
 
@@ -12,6 +15,7 @@ from simulation import (
     detect_conflicts,
     calculate_critical_path,
     compare_scenarios,
+    simulate_building_progress,
     BASE_TASKS,
     DEFAULT_PROJECT_CONFIG,
 )
@@ -27,7 +31,7 @@ app = FastAPI(title="ConstructIQ", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"], # Allow everything during development
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -61,6 +65,7 @@ class SimulateResponse(BaseModel):
     simulation: dict[str, Any]
     conflicts: list[ConflictDetail]
     ai_analysis: Optional[str] = None
+    build_progress: Optional[dict[str, Any]] = None
 
 
 class ScenarioConfig(BaseModel):
@@ -146,10 +151,15 @@ def simulate(req: SimulateRequest):
         except Exception as exc:
             ai_analysis = f"AI analysis unavailable: {exc}"
 
+    build_progress = simulate_building_progress(
+        zones, req.project_duration, req.day, req.project_config,
+    )
+
     return SimulateResponse(
         simulation=state,
         conflicts=[ConflictDetail(**c) for c in conflicts],
         ai_analysis=ai_analysis,
+        build_progress=build_progress,
     )
 
 

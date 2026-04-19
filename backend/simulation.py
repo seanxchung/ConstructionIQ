@@ -1194,3 +1194,225 @@ def compare_scenarios(
         }
 
     return results
+
+
+# ── 7. Resource-Gated Build Progress ─────────────────────────────────────────
+
+
+def calculate_resource_modifier(
+    state: dict[str, Any],
+    conflicts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compute a 0.0–1.0 progress modifier based on crew, material,
+    equipment adequacy, and active conflict penalties.
+    """
+    active_tasks = state.get("active_tasks", [])
+    crew_on_site = state.get("crew_on_site", {})
+    crew_required = state.get("crew_required", {})
+    materials_inv = state.get("materials", {})
+    cranes = state.get("cranes", [])
+
+    # Look up full task definitions (with required_crew / required_materials)
+    # so we know what each active task actually needs.
+    cp_result = calculate_critical_path(
+        BASE_TASKS, state.get("project_duration", 180)
+    )
+    task_defs = {t["name"]: t for t in cp_result["schedule"]}
+
+    # ── Crew adequacy ────────────────────────────────────────────────
+    crew_ratios: list[float] = []
+    for role, needed in crew_required.items():
+        if needed <= 0:
+            continue
+        on_site = crew_on_site.get(role, 0)
+        crew_ratios.append(min(on_site / needed, 1.0))
+    crew_factor = min(crew_ratios) if crew_ratios else 1.0
+
+    # ── Material adequacy ────────────────────────────────────────────
+    # Build a lookup: material_key → best pct_remaining across all zones
+    inv_by_key: dict[str, float] = {}
+    for mat in materials_inv.values():
+        key = mat.get("key", "")
+        pct = mat.get("pct_remaining", 0)
+        inv_by_key[key] = max(inv_by_key.get(key, 0), pct)
+
+    mat_factors: list[float] = []
+    for t_info in active_tasks:
+        task_def = task_defs.get(t_info["name"], {})
+        for mat_key in task_def.get("required_materials", {}):
+            if mat_key not in inv_by_key:
+                # Required material has no inventory zone → full stockout
+                mat_factors.append(0.0)
+                continue
+            pct = inv_by_key[mat_key]
+            if pct > 20:
+                mat_factors.append(1.0)
+            elif pct > 5:
+                mat_factors.append(0.3 + (pct - 5) / 15 * 0.7)
+            else:
+                mat_factors.append(0.0)
+    material_factor = min(mat_factors) if mat_factors else 1.0
+
+    # ── Equipment adequacy ───────────────────────────────────────────
+    crane_needed = False
+    for t_info in active_tasks:
+        task_def = task_defs.get(t_info["name"], {})
+        if "crane_operator" in task_def.get("required_crew", {}):
+            crane_needed = True
+            break
+
+    if crane_needed:
+        operational = sum(
+            1 for c in cranes if c.get("active") and not c.get("breakdown")
+        )
+        equipment_factor = min(operational / 1.0, 1.0) if True else 1.0
+    else:
+        equipment_factor = 1.0
+
+    # ── Conflict penalty ─────────────────────────────────────────────
+    penalty = 0.0
+    for c in conflicts:
+        sev = c.get("severity", "")
+        if sev == "HIGH":
+            penalty += 0.1
+        elif sev == "MEDIUM":
+            penalty += 0.03
+    conflict_penalty = min(penalty, 0.5)
+
+    # ── Combined modifier ────────────────────────────────────────────
+    base = min(crew_factor, material_factor, equipment_factor)
+    modifier = base * (1.0 - conflict_penalty)
+
+    # ── Status thresholds ────────────────────────────────────────────
+    if modifier < 0.2:
+        status = "stalled"
+        modifier = 0.0
+    elif modifier < 0.6:
+        status = "delayed"
+    else:
+        status = "on_track"
+
+    # ── Blockers ─────────────────────────────────────────────────────
+    blockers: list[str] = []
+
+    if crew_factor < 0.6:
+        for role, needed in crew_required.items():
+            on_site = crew_on_site.get(role, 0)
+            if on_site < needed:
+                blockers.append(
+                    f"Undercrewed — need {needed - on_site} more {role}(s)"
+                )
+
+    if material_factor < 0.6:
+        for t_info in active_tasks:
+            task_def = task_defs.get(t_info["name"], {})
+            for mat_key in task_def.get("required_materials", {}):
+                if mat_key not in inv_by_key:
+                    cat = MATERIAL_CATALOG.get(mat_key, {})
+                    blockers.append(
+                        f"Material stockout — no {cat.get('name', mat_key)} "
+                        f"inventory on site"
+                    )
+                elif inv_by_key[mat_key] <= 20:
+                    cat = MATERIAL_CATALOG.get(mat_key, {})
+                    blockers.append(
+                        f"Material shortage — {cat.get('name', mat_key)} "
+                        f"at {inv_by_key[mat_key]:.0f}%"
+                    )
+
+    if equipment_factor < 1.0 and crane_needed:
+        blockers.append("No operational crane")
+
+    high_count = sum(1 for c in conflicts if c.get("severity") == "HIGH")
+    if conflict_penalty > 0.2:
+        blockers.append(
+            f"{high_count} high-severity conflict(s) blocking progress"
+        )
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique_blockers: list[str] = []
+    for b in blockers:
+        if b not in seen:
+            seen.add(b)
+            unique_blockers.append(b)
+
+    return {
+        "modifier": round(modifier, 4),
+        "status": status,
+        "blockers": unique_blockers,
+        "primary_blocker": unique_blockers[0] if unique_blockers else None,
+        "_debug": {
+            "crew_factor": round(crew_factor, 4),
+            "material_factor": round(material_factor, 4),
+            "equipment_factor": round(equipment_factor, 4),
+            "conflict_penalty": round(conflict_penalty, 4),
+            "base": round(base, 4),
+        },
+    }
+
+
+def simulate_building_progress(
+    zones: list[dict[str, Any]],
+    project_duration: int,
+    target_day: int,
+    project_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run the simulation day-by-day from day 1 to target_day, accumulating
+    building progress based on daily resource availability.
+    """
+    baseline_daily_rate = 100.0 / max(project_duration, 1)
+    build_pct = 0.0
+    days_on_track = 0
+    days_delayed = 0
+    days_stalled = 0
+    daily_history: list[dict[str, Any]] = []
+    last_resource: dict[str, Any] = {}
+
+    for d in range(1, target_day + 1):
+        state = run_simulation_tick(zones, d, project_duration, project_config)
+        conflicts = detect_conflicts(
+            zones, state, d, project_duration, project_config=project_config,
+        )
+        resource = calculate_resource_modifier(state, conflicts)
+
+        daily_progress = baseline_daily_rate * resource["modifier"]
+        build_pct = min(build_pct + daily_progress, 100.0)
+
+        if resource["status"] == "on_track":
+            days_on_track += 1
+        elif resource["status"] == "delayed":
+            days_delayed += 1
+        else:
+            days_stalled += 1
+
+        daily_history.append({
+            "day": d,
+            "modifier": resource["modifier"],
+            "status": resource["status"],
+            "build_pct": round(build_pct, 2),
+            "daily_progress": round(daily_progress, 4),
+        })
+
+        last_resource = resource
+
+    # Projected completion
+    projected_completion_day: int | None = None
+    if build_pct < 100.0 and target_day > 0:
+        avg_rate = build_pct / target_day if target_day > 0 else 0
+        if avg_rate > 0.01:
+            remaining = 100.0 - build_pct
+            projected_completion_day = target_day + round(remaining / avg_rate)
+
+    return {
+        "build_pct": round(build_pct, 2),
+        "days_on_track": days_on_track,
+        "days_delayed": days_delayed,
+        "days_stalled": days_stalled,
+        "daily_history": daily_history,
+        "current_status": last_resource.get("status", "on_track"),
+        "current_blockers": last_resource.get("blockers", []),
+        "projected_completion_day": projected_completion_day,
+        "current_modifier": last_resource.get("modifier", 1.0),
+        "_debug_factors": last_resource.get("_debug", {}),
+    }

@@ -202,7 +202,10 @@ def _build_layout_prompt(
     grid_size: int,
 ) -> str:
     """Build the prompt that asks Claude for an optimal site layout as JSON."""
-    col_labels = [chr(ord("A") + i) for i in range(grid_size)]
+    col_labels = [
+    chr(ord("A") + i) if i < 26 else "A" + chr(ord("A") + i - 26)
+    for i in range(grid_size)
+]
     col_list = ", ".join(col_labels)
     num_worker_zones = math.ceil(num_workers / 25)
 
@@ -240,7 +243,7 @@ def generate_optimal_layout(
     num_workers: int,
     num_material_zones: int,
     project_duration: int,
-    grid_size: int = 12,
+    grid_size: int = 30,
 ) -> dict[str, Any]:
     """Ask Claude to produce an optimal construction site layout on a grid.
 
