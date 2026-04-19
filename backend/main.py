@@ -16,6 +16,7 @@ from simulation import (
     calculate_critical_path,
     compare_scenarios,
     simulate_building_progress,
+    simulate_scenario,
     BASE_TASKS,
     DEFAULT_PROJECT_CONFIG,
 )
@@ -161,6 +162,35 @@ def simulate(req: SimulateRequest):
         ai_analysis=ai_analysis,
         build_progress=build_progress,
     )
+
+
+class ScenarioPerturbation(BaseModel):
+    triggerDay: int = Field(..., ge=1)
+    type: str = Field(...)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScenarioSimRequest(BaseModel):
+    zones: Optional[list[dict[str, Any]]] = None
+    project_config: Optional[dict[str, Any]] = None
+    project_duration: int = 90
+    perturbation: ScenarioPerturbation
+
+
+@app.post("/api/simulate/scenario")
+def simulate_scenario_endpoint(req: ScenarioSimRequest):
+    zones = req.zones or []
+    result = simulate_scenario(
+        zones=zones,
+        project_duration=req.project_duration,
+        project_config=req.project_config,
+        perturbation={
+            "triggerDay": req.perturbation.triggerDay,
+            "type": req.perturbation.type,
+            "params": req.perturbation.params,
+        },
+    )
+    return result
 
 
 @app.post("/api/compare")

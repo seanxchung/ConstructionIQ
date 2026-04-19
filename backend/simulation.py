@@ -1416,3 +1416,148 @@ def simulate_building_progress(
         "current_modifier": last_resource.get("modifier", 1.0),
         "_debug_factors": last_resource.get("_debug", {}),
     }
+
+
+# ── 8. Scenario Perturbation Simulation ──────────────────────────────────────
+
+
+_OVERHEAD_PER_DAY = 15_000
+_MOBILE_CRANE_RENTAL = 45_000
+
+
+def _apply_perturbation(
+    state: dict[str, Any],
+    perturbation_type: str,
+    params: dict[str, Any],
+    day: int,
+    trigger_day: int,
+) -> tuple[dict[str, Any], int]:
+    """Mutate a simulation state dict to reflect a perturbation event.
+
+    Returns (mutated_state, daily_extra_cost).
+    """
+    days_since = day - trigger_day
+    duration = params.get("duration_days", params.get("rollback_days", 0))
+    extra_cost = 0
+
+    if duration <= 0 or days_since < 0 or days_since >= duration:
+        return state, 0
+
+    if perturbation_type == "crane_breakdown":
+        for crane in state.get("cranes", []):
+            if crane.get("active"):
+                crane["active"] = False
+                crane["breakdown"] = True
+                break
+        extra_cost = _OVERHEAD_PER_DAY
+
+    elif perturbation_type == "material_delay":
+        for mat in state.get("materials", {}).values():
+            mat["quantity"] = 0
+            mat["pct_remaining"] = 0
+        extra_cost = _OVERHEAD_PER_DAY
+
+    elif perturbation_type == "weather_shutdown":
+        state["total_workers"] = 0
+        state["crew_on_site"] = {}
+        state["active_tasks"] = []
+        extra_cost = _OVERHEAD_PER_DAY
+
+    elif perturbation_type == "labor_shortage":
+        pct = params.get("pct_reduction", 40) / 100.0
+        for role in list(state.get("crew_on_site", {})):
+            state["crew_on_site"][role] = max(
+                1, round(state["crew_on_site"][role] * (1.0 - pct))
+            )
+        state["total_workers"] = sum(state.get("crew_on_site", {}).values())
+        extra_cost = round(_OVERHEAD_PER_DAY * pct)
+
+    elif perturbation_type == "concrete_curing":
+        for task in state.get("active_tasks", []):
+            if "concrete" in task.get("name", "").lower() or "foundation" in task.get("phase", "").lower():
+                state["crew_on_site"] = {}
+                state["total_workers"] = 0
+                break
+        extra_cost = _OVERHEAD_PER_DAY // 2
+
+    elif perturbation_type == "inspection_fail":
+        rollback = params.get("rollback_days", 7)
+        extra_cost = 25_000 + rollback * 5_000
+
+    return state, extra_cost
+
+
+def simulate_scenario(
+    zones: list[dict[str, Any]],
+    project_duration: int,
+    project_config: dict[str, Any] | None,
+    perturbation: dict[str, Any],
+) -> dict[str, Any]:
+    """Run a full project simulation with a perturbation injected at trigger_day.
+
+    Returns final state, build progress, conflicts, trajectory snapshots,
+    total cost impact, and schedule delta.
+    """
+    trigger_day = perturbation.get("triggerDay", 1)
+    p_type = perturbation.get("type", "")
+    p_params = perturbation.get("params", {})
+
+    baseline_daily_rate = 100.0 / max(project_duration, 1)
+    build_pct = 0.0
+    cumulative_extra_cost = 0
+    trajectory: list[dict[str, Any]] = []
+
+    last_state: dict[str, Any] = {}
+    last_conflicts: list[dict[str, Any]] = []
+    last_build_progress: dict[str, Any] = {}
+
+    for d in range(1, project_duration + 1):
+        state = run_simulation_tick(zones, d, project_duration, project_config)
+        conflicts = detect_conflicts(
+            zones, state, d, project_duration, project_config=project_config,
+        )
+
+        if d >= trigger_day:
+            state, daily_cost = _apply_perturbation(state, p_type, p_params, d, trigger_day)
+            cumulative_extra_cost += daily_cost
+
+        resource = calculate_resource_modifier(state, conflicts)
+        daily_progress = baseline_daily_rate * resource["modifier"]
+        build_pct = min(build_pct + daily_progress, 100.0)
+
+        last_state = state
+        last_conflicts = conflicts
+
+        if d % 5 == 1 or d == project_duration:
+            trajectory.append({
+                "day": d,
+                "simulation": state,
+                "build_progress": {
+                    "build_pct": round(build_pct, 2),
+                    "current_status": resource.get("status", "on_track"),
+                    "current_blockers": resource.get("blockers", []),
+                },
+                "conflicts": conflicts,
+            })
+
+    schedule_delta = 0
+    if build_pct < 100.0 and project_duration > 0:
+        avg_rate = build_pct / project_duration if project_duration > 0 else 0
+        if avg_rate > 0.01:
+            remaining = 100.0 - build_pct
+            schedule_delta = round(remaining / avg_rate)
+
+    last_build_progress = {
+        "build_pct": round(build_pct, 2),
+        "current_status": "on_track" if schedule_delta == 0 else "delayed",
+        "current_blockers": [],
+    }
+
+    return {
+        "final_simulation": last_state,
+        "final_build_progress": last_build_progress,
+        "final_conflicts": last_conflicts,
+        "trajectory": trajectory,
+        "total_cost_impact": cumulative_extra_cost,
+        "schedule_delta_days": schedule_delta,
+    }

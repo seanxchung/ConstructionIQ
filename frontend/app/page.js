@@ -5,6 +5,8 @@ import ReactMarkdown from "react-markdown";
 import { supabase } from "./auth";
 import SiteScene3D from "./components/SiteScene3D/SiteScene3D";
 import Landing from "./components/Landing/Landing";
+import ScenariosView from "./components/Scenarios/ScenariosView";
+import { generateScenarioTree } from "./components/Scenarios/scenarioGeneration";
 
 /* ───────────────────── constants ───────────────────── */
 
@@ -247,6 +249,16 @@ export default function Home() {
   const prevBuildStatusRef = useRef(null);
   const debriefFiredRef = useRef(false);
 
+  const [scenarioTree, setScenarioTree] = useState(null);
+  const [selectedScenarioNodeId, setSelectedScenarioNodeId] = useState(null);
+  const [scenarioGenerating, setScenarioGenerating] = useState(false);
+  const [scenarioProgress, setScenarioProgress] = useState({ current: 0, total: 0, label: "" });
+  const [scenarioViewMode, setScenarioViewMode] = useState(null);
+  const [scenarioViewNodeId, setScenarioViewNodeId] = useState(null);
+  const [scenarioPlaybackDay, setScenarioPlaybackDay] = useState(null);
+  const [scenarioPlaybackPlaying, setScenarioPlaybackPlaying] = useState(false);
+  const scenarioAbortRef = useRef(null);
+
   const triggerAlert = () => {
     setHasNewAlert(true);
     clearTimeout(alertTimerRef.current);
@@ -288,6 +300,20 @@ export default function Home() {
     }, 800);
     return () => clearInterval(id);
   }, [isPlaying, projectDuration]);
+
+  useEffect(() => {
+    if (!scenarioPlaybackPlaying || scenarioPlaybackDay == null) return;
+    const id = setInterval(() => {
+      setScenarioPlaybackDay((d) => {
+        if (d >= projectDuration) {
+          setScenarioPlaybackPlaying(false);
+          return projectDuration;
+        }
+        return d + 1;
+      });
+    }, 400);
+    return () => clearInterval(id);
+  }, [scenarioPlaybackPlaying, projectDuration, scenarioPlaybackDay]);
 
   useEffect(() => {
     if (!isPlaying || day <= 1) return;
@@ -460,6 +486,56 @@ export default function Home() {
     prevConflictTypesRef.current = new Set();
     prevBuildStatusRef.current = null;
     debriefFiredRef.current = false;
+    clearScenarioState();
+  };
+
+  const handleGenerateScenarios = async () => {
+    setScenarioGenerating(true);
+    setScenarioProgress({ current: 0, total: 0, label: "Starting..." });
+    const controller = new AbortController();
+    scenarioAbortRef.current = controller;
+    try {
+      const tree = await generateScenarioTree({
+        zones: buildZones(),
+        projectConfig: projectConfig || savedConfig,
+        projectDuration,
+        mainConflicts: simConflicts,
+        mainSimulationState: simulationState,
+        mainBuildProgress: buildProgressState,
+        onProgress: (current, total, label) => setScenarioProgress({ current, total, label }),
+        signal: controller.signal,
+      });
+      if (!controller.signal.aborted) {
+        setScenarioTree(tree);
+      }
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        console.error("Scenario generation failed:", err);
+        setMessages((m) => [...m, { role: "ai", text: "Scenario generation failed. Check backend is running." }]);
+      }
+    } finally {
+      setScenarioGenerating(false);
+      scenarioAbortRef.current = null;
+    }
+  };
+
+  const handleViewScenarioState = (nodeId, mode) => {
+    setScenarioViewNodeId(nodeId);
+    setScenarioViewMode(mode);
+    setActiveTab("site");
+    if (mode === "playback") {
+      const node = scenarioTree.nodes[nodeId];
+      setScenarioPlaybackDay(node.triggerDay || 1);
+      setScenarioPlaybackPlaying(true);
+    }
+  };
+
+  const handleExitScenarioView = () => {
+    setScenarioViewMode(null);
+    setScenarioViewNodeId(null);
+    setScenarioPlaybackDay(null);
+    setScenarioPlaybackPlaying(false);
+    setActiveTab("scenarios");
   };
 
   const buildZones = () =>
@@ -567,6 +643,16 @@ export default function Home() {
     }
   };
 
+  const clearScenarioState = () => {
+    setScenarioTree(null);
+    setSelectedScenarioNodeId(null);
+    setScenarioViewMode(null);
+    setScenarioViewNodeId(null);
+    setScenarioPlaybackDay(null);
+    setScenarioPlaybackPlaying(false);
+    if (scenarioAbortRef.current) { scenarioAbortRef.current.abort(); scenarioAbortRef.current = null; }
+  };
+
   const rewind = () => {
     setIsPlaying(false);
     setDay(1);
@@ -581,6 +667,7 @@ export default function Home() {
     prevPhaseRef.current = "";
     prevBuildStatusRef.current = null;
     debriefFiredRef.current = false;
+    clearScenarioState();
   };
 
   const narrateBuildTransition = (targetDay, prevStatus, newStatus, blockers) => {
@@ -736,6 +823,7 @@ export default function Home() {
     prevPhaseRef.current = "";
     prevBuildStatusRef.current = null;
     debriefFiredRef.current = false;
+    clearScenarioState();
   };
 
   const handleResizeMove = (e) => {
@@ -843,6 +931,7 @@ export default function Home() {
       setOptimizerWorkers(formData.workers);
       setActiveTrucks([]);
       prevBuildStatusRef.current = null;
+      clearScenarioState();
 
       const typeCounts = {};
       next.forEach((c) => { if (c?.isOrigin) typeCounts[c.id] = (typeCounts[c.id] || 0) + 1; });
@@ -940,6 +1029,7 @@ export default function Home() {
       setOptimizerWorkers(0);
       setActiveTrucks([]);
       prevBuildStatusRef.current = null;
+      clearScenarioState();
       setMessages((m) => [
         ...m,
         { role: "ai", text: `Loaded project "${data.name}". ${(data.zones || []).length} zones restored.${data.config ? " Configuration restored." : ""} Ready to simulate.` },
@@ -1044,6 +1134,32 @@ export default function Home() {
   );
   const rowLabels = Array.from({ length: GRID }, (_, i) => String(i + 1));
 
+  /* ────────── scenario 3D overrides ────────── */
+  const scenarioNode = scenarioViewNodeId && scenarioTree ? scenarioTree.nodes[scenarioViewNodeId] : null;
+  let scenarioStateOverride = null;
+  let scenarioBuildPctOverride = null;
+  let scenarioBuildStatusOverride = null;
+  let scenarioBuildBlockersOverride = null;
+
+  if (scenarioViewMode === "snapshot" && scenarioNode) {
+    scenarioStateOverride = scenarioNode.simulationState;
+    scenarioBuildPctOverride = scenarioNode.buildProgressState?.build_pct;
+    scenarioBuildStatusOverride = scenarioNode.buildProgressState?.current_status;
+    scenarioBuildBlockersOverride = scenarioNode.buildProgressState?.current_blockers;
+  } else if (scenarioViewMode === "playback" && scenarioNode && scenarioNode.trajectory) {
+    const traj = scenarioNode.trajectory;
+    let best = traj[0];
+    for (const snap of traj) {
+      if (snap.day <= (scenarioPlaybackDay || 1)) best = snap;
+    }
+    if (best) {
+      scenarioStateOverride = best.simulation;
+      scenarioBuildPctOverride = best.build_progress?.build_pct;
+      scenarioBuildStatusOverride = best.build_progress?.current_status;
+      scenarioBuildBlockersOverride = best.build_progress?.current_blockers;
+    }
+  }
+
   /* ───────────────────── render ───────────────────── */
 
   return (
@@ -1057,6 +1173,7 @@ export default function Home() {
         </div>
         <div style={S.navCenter}>
           <NavTab label="SITE PLAN" active={activeTab === "site"} onClick={() => setActiveTab("site")} />
+          <NavTab label="SCENARIOS" active={activeTab === "scenarios"} onClick={() => setActiveTab("scenarios")} />
           <NavTab label="SCHEDULE" active={activeTab === "schedule"} onClick={() => setActiveTab("schedule")} />
           <NavTab label="ANALYTICS" active={activeTab === "analytics"} onClick={() => setActiveTab("analytics")} />
           <NavTab label="CONFIGURE" active={activeTab === "configure"} onClick={() => setActiveTab("configure")} badge={configErrorCount} />
@@ -1087,7 +1204,49 @@ export default function Home() {
       <div style={S.main}>
         {/* ──── LEFT COLUMN ──── */}
         <div style={S.leftCol}>
-          {activeTab === "site" ? (
+          {/* Scenario view banner */}
+          {activeTab === "site" && scenarioViewMode && scenarioViewNodeId && scenarioTree && (
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              width: "100%", height: 44, padding: "0 20px",
+              background: "rgba(99,102,241,0.08)",
+              borderBottom: "1px solid rgba(99,102,241,0.2)",
+              flexShrink: 0,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "#6366F1", textTransform: "uppercase" }}>SCENARIO VIEW</span>
+                <span style={{ fontSize: 13, color: "#e2e8f0" }}>{scenarioTree.nodes[scenarioViewNodeId]?.label}</span>
+              </div>
+              <div style={{ fontFamily: "monospace", fontSize: 12, color: "#8B8FA3" }}>
+                DAY {scenarioViewMode === "playback" ? (scenarioPlaybackDay || 1) : (scenarioTree.nodes[scenarioViewNodeId]?.day || projectDuration)} &middot; {scenarioViewMode === "playback" ? "PLAYBACK" : "SNAPSHOT"}
+              </div>
+              <button
+                onClick={handleExitScenarioView}
+                style={{
+                  background: "none", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4,
+                  color: "#e2e8f0", fontSize: 11, fontWeight: 500, padding: "4px 12px", cursor: "pointer",
+                  transition: "border-color 0.15s",
+                }}
+              >
+                &larr; Back to Scenarios
+              </button>
+            </div>
+          )}
+          {activeTab === "scenarios" ? (
+            <ScenariosView
+              scenarioTree={scenarioTree}
+              projectDuration={projectDuration}
+              simulationComplete={day >= projectDuration || debriefFiredRef.current}
+              isGenerating={scenarioGenerating}
+              progress={scenarioProgress}
+              selectedNodeId={selectedScenarioNodeId}
+              onSelectNode={setSelectedScenarioNodeId}
+              onGenerate={handleGenerateScenarios}
+              onRegenerate={handleGenerateScenarios}
+              onViewState={handleViewScenarioState}
+              onGotoSitePlan={() => setActiveTab("site")}
+            />
+          ) : activeTab === "site" ? (
           <>
           {/* Zone Toolbar */}
           <div style={{ ...S.toolbar, flexWrap: "wrap", rowGap: 4 }}>
@@ -1210,14 +1369,19 @@ export default function Home() {
                   <SiteScene3D
                     cells={cells}
                     simulationState={simulationState}
-                    activeTrucks={activeTrucks}
-                    day={day}
+                    activeTrucks={scenarioViewMode ? [] : activeTrucks}
+                    day={scenarioViewMode === "playback" ? scenarioPlaybackDay : day}
                     projectDuration={projectDuration}
                     buildPct={buildPct}
                     buildStatus={buildStatus}
                     buildBlockers={buildBlockers}
                     blockedRoadCells={blockedRoadCells}
-                    readOnly={false}
+                    readOnly={!!scenarioViewMode}
+                    stateOverride={scenarioStateOverride}
+                    buildPctOverride={scenarioBuildPctOverride}
+                    buildStatusOverride={scenarioBuildStatusOverride}
+                    buildBlockersOverride={scenarioBuildBlockersOverride}
+                    suppressUI={!!scenarioViewMode}
                   />
                 </div>
               ) : (
@@ -1699,20 +1863,20 @@ export default function Home() {
           )}
 
           {/* Timeline */}
-          <div style={S.timeline}>
-            <button onClick={rewind} style={{ ...S.playBtn }} title="Rewind to Day 1">
+          <div style={{ ...S.timeline, opacity: scenarioViewMode === "snapshot" ? 0.4 : 1, pointerEvents: scenarioViewMode === "snapshot" ? "none" : "auto" }}>
+            <button onClick={scenarioViewMode === "playback" ? () => { setScenarioPlaybackDay(scenarioNode?.triggerDay || 1); setScenarioPlaybackPlaying(false); } : rewind} style={{ ...S.playBtn }} title="Rewind to Day 1">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
             </button>
             <button
-              onClick={() => { setIsPlaying(!isPlaying); }}
+              onClick={() => { scenarioViewMode === "playback" ? setScenarioPlaybackPlaying(!scenarioPlaybackPlaying) : setIsPlaying(!isPlaying); }}
               style={{
                 ...S.playBtn,
-                background: isPlaying ? "transparent" : "#6366F1",
-                borderColor: isPlaying ? "rgba(255,255,255,0.06)" : "#6366F1",
+                background: (scenarioViewMode === "playback" ? scenarioPlaybackPlaying : isPlaying) ? "transparent" : "#6366F1",
+                borderColor: (scenarioViewMode === "playback" ? scenarioPlaybackPlaying : isPlaying) ? "rgba(255,255,255,0.06)" : "#6366F1",
                 color: "#fff",
               }}
             >
-              {isPlaying ? (
+              {(scenarioViewMode === "playback" ? scenarioPlaybackPlaying : isPlaying) ? (
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
               ) : (
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -1720,7 +1884,7 @@ export default function Home() {
             </button>
             <div style={S.dayInfo}>
               <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>
-                Day {day}
+                Day {scenarioViewMode === "playback" ? (scenarioPlaybackDay || 1) : day}
               </span>
               <span style={{ fontSize: 10, color: "#4A4E63" }}>of {projectDuration}</span>
             </div>

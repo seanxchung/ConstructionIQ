@@ -40,7 +40,7 @@ function LandingCameraRig() {
   return null;
 }
 
-function Scene({ cells, simulationState, activeTrucks, buildPct, buildStatus, buildBlockers, blockedRoadCells, readOnly, landingMode }) {
+function Scene({ cells, simulationState, activeTrucks, buildPct, buildStatus, buildBlockers, blockedRoadCells, readOnly, landingMode, suppressUI }) {
   const simCranes = simulationState?.cranes || [];
   const workersByZone = simulationState?.workers || {};
 
@@ -244,7 +244,7 @@ function Scene({ cells, simulationState, activeTrucks, buildPct, buildStatus, bu
         }
       })}
        {/* Build status badge — floats above the building */}
-       {!landingMode && buildingAnchor && badge && (
+       {!landingMode && !suppressUI && buildingAnchor && badge && (
         <Html
           position={[buildingAnchor.x, buildingAnchor.y, buildingAnchor.z]}
           center
@@ -345,8 +345,19 @@ export default function SiteScene3D({
   blockedRoadCells,
   readOnly = false,
   landingMode = false,
+  stateOverride,
+  buildPctOverride,
+  buildStatusOverride,
+  buildBlockersOverride,
+  suppressUI = false,
 }) {
   const safeBlockedRoadCells = blockedRoadCells instanceof Set ? blockedRoadCells : new Set();
+
+  const effectiveState = stateOverride || simulationState;
+  const effectiveBuildPct = buildPctOverride != null ? buildPctOverride : buildPct;
+  const effectiveBuildStatus = buildStatusOverride != null ? buildStatusOverride : buildStatus;
+  const effectiveBuildBlockers = buildBlockersOverride != null ? buildBlockersOverride : buildBlockers;
+  const effectiveSuppressUI = suppressUI || landingMode;
 
   return (
     <Canvas
@@ -363,14 +374,15 @@ export default function SiteScene3D({
       <Suspense fallback={null}>
         <Scene
           cells={cells}
-          simulationState={simulationState}
+          simulationState={effectiveState}
           activeTrucks={activeTrucks || []}
-          buildPct={buildPct || 0}
-          buildStatus={buildStatus}
-          buildBlockers={buildBlockers}
+          buildPct={effectiveBuildPct || 0}
+          buildStatus={effectiveBuildStatus}
+          buildBlockers={effectiveBuildBlockers}
           blockedRoadCells={safeBlockedRoadCells}
           readOnly={readOnly}
           landingMode={landingMode}
+          suppressUI={effectiveSuppressUI}
         />
       </Suspense>
     </Canvas>
