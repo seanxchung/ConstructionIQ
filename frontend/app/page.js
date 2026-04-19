@@ -1701,11 +1701,24 @@ export default function Home() {
                 ))}
               </div>
             </div>
-
             <div style={S.pctDisplay}>
               <span style={{ fontSize: 14, fontWeight: 600, color: "#8B8FA3", fontVariantNumeric: "tabular-nums" }}>
                 {Math.round(progress)}%
               </span>
+              {buildProgress && (
+                <span style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  fontVariantNumeric: "tabular-nums",
+                  color: buildStatus === "stalled" ? "#ef4444"
+                       : buildStatus === "delayed" ? "#eab308"
+                       : "#8B8FA3",
+                  marginTop: 1,
+                  letterSpacing: "0.02em",
+                }}>
+                  Build {Math.round(buildPct)}%
+                </span>
+              )}
             </div>
           </div>
         </div>
