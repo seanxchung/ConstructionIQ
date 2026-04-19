@@ -3,9 +3,7 @@
 import { useRef, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
 
-const TOTAL_FLOORS = 8;
-const FLOOR_HEIGHT = 3;
-const FULL_HEIGHT = TOTAL_FLOORS * FLOOR_HEIGHT;
+const FLOOR_HEIGHT = 2;
 
 function getPhase(buildPct) {
   if (buildPct <= 15) return "excavation";
@@ -89,10 +87,11 @@ function Foundation({ width, depth }) {
 }
 
 /* ── Structural Frame (30-55%) ── */
-function StructuralFrame({ width, depth, buildPct }) {
+function StructuralFrame({ width, depth, buildPct, floors }) {
+  const fullHeight = floors * FLOOR_HEIGHT;
   const t = (buildPct - 30) / 25;
-  const currentHeight = Math.max(FLOOR_HEIGHT, t * FULL_HEIGHT);
-  const floorCount = Math.max(1, Math.ceil(t * TOTAL_FLOORS));
+  const currentHeight = Math.max(FLOOR_HEIGHT, t * fullHeight);
+  const floorCount = Math.max(1, Math.ceil(t * floors));
 
   const columns = useMemo(() => {
     const arr = [];
@@ -165,7 +164,8 @@ function StructuralFrame({ width, depth, buildPct }) {
 }
 
 /* ── MEP (55-75%) ── */
-function MEPPhase({ width, depth }) {
+function MEPPhase({ width, depth, floors }) {
+  const fullHeight = floors * FLOOR_HEIGHT;
   const columns = useMemo(() => {
     const arr = [];
     const xCount = Math.max(2, Math.round(width / 2) + 1);
@@ -207,14 +207,14 @@ function MEPPhase({ width, depth }) {
 
       {/* Frame columns */}
       {columns.map(([cx, cz], i) => (
-        <mesh key={`col-${i}`} position={[cx, FULL_HEIGHT / 2 + 0.5, cz]} castShadow>
-          <boxGeometry args={[0.2, FULL_HEIGHT, 0.2]} />
+        <mesh key={`col-${i}`} position={[cx, fullHeight / 2 + 0.5, cz]} castShadow>
+          <boxGeometry args={[0.2, fullHeight, 0.2]} />
           <meshStandardMaterial {...steelMat} />
         </mesh>
       ))}
 
       {/* Floor beams + translucent wall panels */}
-      {Array.from({ length: TOTAL_FLOORS }, (_, f) => {
+      {Array.from({ length: floors }, (_, f) => {
         const fy = (f + 1) * FLOOR_HEIGHT + 0.5;
         return (
           <group key={`mep-floor-${f}`}>
@@ -245,8 +245,8 @@ function MEPPhase({ width, depth }) {
 
       {/* Conduit / pipe lines */}
       {conduits.map((c, i) => (
-        <mesh key={`conduit-${i}`} position={[c.x, FULL_HEIGHT / 2 + 0.5, c.z]}>
-          <cylinderGeometry args={[0.06, 0.06, FULL_HEIGHT, 6]} />
+        <mesh key={`conduit-${i}`} position={[c.x, fullHeight / 2 + 0.5, c.z]}>
+          <cylinderGeometry args={[0.06, 0.06, fullHeight, 6]} />
           <meshStandardMaterial color={c.color} metalness={0.4} roughness={0.5} />
         </mesh>
       ))}
@@ -255,37 +255,38 @@ function MEPPhase({ width, depth }) {
 }
 
 /* ── Finishing (75-90%) ── */
-function Finishing({ width, depth }) {
+function Finishing({ width, depth, floors }) {
+  const fullHeight = floors * FLOOR_HEIGHT;
   const windowBands = useMemo(() => {
     const arr = [];
-    for (let f = 0; f < TOTAL_FLOORS; f++) {
+    for (let f = 0; f < floors; f++) {
       arr.push(f * FLOOR_HEIGHT + 1.5 + 0.5);
     }
     return arr;
-  }, []);
+  }, [floors]);
 
   return (
     <group>
       {/* Solid walls — 4 faces */}
-      <mesh position={[0, FULL_HEIGHT / 2 + 0.5, depth / 2]} castShadow receiveShadow>
-        <boxGeometry args={[width, FULL_HEIGHT, 0.12]} />
+      <mesh position={[0, fullHeight / 2 + 0.5, depth / 2]} castShadow receiveShadow>
+        <boxGeometry args={[width, fullHeight, 0.12]} />
         <meshStandardMaterial color="#334155" />
       </mesh>
-      <mesh position={[0, FULL_HEIGHT / 2 + 0.5, -depth / 2]} castShadow receiveShadow>
-        <boxGeometry args={[width, FULL_HEIGHT, 0.12]} />
+      <mesh position={[0, fullHeight / 2 + 0.5, -depth / 2]} castShadow receiveShadow>
+        <boxGeometry args={[width, fullHeight, 0.12]} />
         <meshStandardMaterial color="#334155" />
       </mesh>
-      <mesh position={[width / 2, FULL_HEIGHT / 2 + 0.5, 0]} castShadow receiveShadow>
-        <boxGeometry args={[0.12, FULL_HEIGHT, depth]} />
+      <mesh position={[width / 2, fullHeight / 2 + 0.5, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.12, fullHeight, depth]} />
         <meshStandardMaterial color="#334155" />
       </mesh>
-      <mesh position={[-width / 2, FULL_HEIGHT / 2 + 0.5, 0]} castShadow receiveShadow>
-        <boxGeometry args={[0.12, FULL_HEIGHT, depth]} />
+      <mesh position={[-width / 2, fullHeight / 2 + 0.5, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.12, fullHeight, depth]} />
         <meshStandardMaterial color="#334155" />
       </mesh>
 
       {/* Roof slab */}
-      <mesh position={[0, FULL_HEIGHT + 0.5 + 0.15, 0]} castShadow>
+      <mesh position={[0, fullHeight + 0.5 + 0.15, 0]} castShadow>
         <boxGeometry args={[width + 0.2, 0.3, depth + 0.2]} />
         <meshStandardMaterial color="#1f2937" />
       </mesh>
@@ -313,7 +314,7 @@ function Finishing({ width, depth }) {
       ))}
 
       {/* Floor slabs (interior) */}
-      {Array.from({ length: TOTAL_FLOORS }, (_, f) => (
+      {Array.from({ length: floors }, (_, f) => (
         <mesh key={`fslab-${f}`} position={[0, (f + 1) * FLOOR_HEIGHT + 0.5, 0]}>
           <boxGeometry args={[width - 0.2, 0.08, depth - 0.2]} />
           <meshStandardMaterial color="#475569" />
@@ -324,7 +325,8 @@ function Finishing({ width, depth }) {
 }
 
 /* ── Complete (90-100%) ── */
-function Complete({ width, depth }) {
+function Complete({ width, depth, floors }) {
+  const fullHeight = floors * FLOOR_HEIGHT;
   const beaconRef = useRef();
 
   useFrame((state) => {
@@ -335,34 +337,34 @@ function Complete({ width, depth }) {
 
   const windowBands = useMemo(() => {
     const arr = [];
-    for (let f = 0; f < TOTAL_FLOORS; f++) {
+    for (let f = 0; f < floors; f++) {
       arr.push(f * FLOOR_HEIGHT + 1.5 + 0.5);
     }
     return arr;
-  }, []);
+  }, [floors]);
 
   return (
     <group>
       {/* Solid walls */}
-      <mesh position={[0, FULL_HEIGHT / 2 + 0.5, depth / 2]} castShadow receiveShadow>
-        <boxGeometry args={[width, FULL_HEIGHT, 0.12]} />
+      <mesh position={[0, fullHeight / 2 + 0.5, depth / 2]} castShadow receiveShadow>
+        <boxGeometry args={[width, fullHeight, 0.12]} />
         <meshStandardMaterial color="#334155" />
       </mesh>
-      <mesh position={[0, FULL_HEIGHT / 2 + 0.5, -depth / 2]} castShadow receiveShadow>
-        <boxGeometry args={[width, FULL_HEIGHT, 0.12]} />
+      <mesh position={[0, fullHeight / 2 + 0.5, -depth / 2]} castShadow receiveShadow>
+        <boxGeometry args={[width, fullHeight, 0.12]} />
         <meshStandardMaterial color="#334155" />
       </mesh>
-      <mesh position={[width / 2, FULL_HEIGHT / 2 + 0.5, 0]} castShadow receiveShadow>
-        <boxGeometry args={[0.12, FULL_HEIGHT, depth]} />
+      <mesh position={[width / 2, fullHeight / 2 + 0.5, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.12, fullHeight, depth]} />
         <meshStandardMaterial color="#334155" />
       </mesh>
-      <mesh position={[-width / 2, FULL_HEIGHT / 2 + 0.5, 0]} castShadow receiveShadow>
-        <boxGeometry args={[0.12, FULL_HEIGHT, depth]} />
+      <mesh position={[-width / 2, fullHeight / 2 + 0.5, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.12, fullHeight, depth]} />
         <meshStandardMaterial color="#334155" />
       </mesh>
 
       {/* Roof slab */}
-      <mesh position={[0, FULL_HEIGHT + 0.5 + 0.15, 0]} castShadow>
+      <mesh position={[0, fullHeight + 0.5 + 0.15, 0]} castShadow>
         <boxGeometry args={[width + 0.2, 0.3, depth + 0.2]} />
         <meshStandardMaterial color="#1f2937" />
       </mesh>
@@ -390,7 +392,7 @@ function Complete({ width, depth }) {
       ))}
 
       {/* Floor slabs */}
-      {Array.from({ length: TOTAL_FLOORS }, (_, f) => (
+      {Array.from({ length: floors }, (_, f) => (
         <mesh key={`fslab-${f}`} position={[0, (f + 1) * FLOOR_HEIGHT + 0.5, 0]}>
           <boxGeometry args={[width - 0.2, 0.08, depth - 0.2]} />
           <meshStandardMaterial color="#475569" />
@@ -398,7 +400,7 @@ function Complete({ width, depth }) {
       ))}
 
       {/* Aviation warning light */}
-      <mesh ref={beaconRef} position={[0, FULL_HEIGHT + 1, 0]}>
+      <mesh ref={beaconRef} position={[0, fullHeight + 1, 0]}>
         <sphereGeometry args={[0.15, 12, 12]} />
         <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={0.5} />
       </mesh>
@@ -407,7 +409,7 @@ function Complete({ width, depth }) {
 }
 
 /* ── Main Building Component ── */
-export default function Building({ x, z, width, depth, buildPct }) {
+export default function Building({ x, z, width, depth, buildPct, floors = 5 }) {
   const cx = x + width / 2;
   const cz = z + depth / 2;
   const phase = getPhase(buildPct);
@@ -416,10 +418,10 @@ export default function Building({ x, z, width, depth, buildPct }) {
     <group position={[cx, 0, cz]}>
       {phase === "excavation" && <Excavation width={width} depth={depth} />}
       {phase === "foundation" && <Foundation width={width} depth={depth} />}
-      {phase === "structure" && <StructuralFrame width={width} depth={depth} buildPct={buildPct} />}
-      {phase === "mep" && <MEPPhase width={width} depth={depth} />}
-      {phase === "finishing" && <Finishing width={width} depth={depth} />}
-      {phase === "complete" && <Complete width={width} depth={depth} />}
+      {phase === "structure" && <StructuralFrame width={width} depth={depth} buildPct={buildPct} floors={floors} />}
+      {phase === "mep" && <MEPPhase width={width} depth={depth} floors={floors} />}
+      {phase === "finishing" && <Finishing width={width} depth={depth} floors={floors} />}
+      {phase === "complete" && <Complete width={width} depth={depth} floors={floors} />}
     </group>
   );
 }

@@ -112,6 +112,18 @@ const _parseDayList = (s) => {
   return s.split(",").map((d) => parseInt(d.trim(), 10)).filter((d) => !isNaN(d));
 };
 
+const _parseBuildingSpec = (desc) => {
+  const s = (desc || "").toLowerCase();
+  let floors = 5;
+  const m = s.match(/(\d+)[\s-]?(?:stor(?:y|ies)|floor)/);
+  if (m) floors = Math.max(1, Math.min(50, parseInt(m[1], 10)));
+  let buildingType = "office";
+  if (/data\s*cent(?:er|re)/.test(s)) buildingType = "data_center";
+  else if (/warehouse|distribution/.test(s)) buildingType = "warehouse";
+  else if (/residential|apartment|condo|housing/.test(s)) buildingType = "residential";
+  return { floors, buildingType };
+};
+
 const _findRoadPath = (cells, fromIdx, toIdx) => {
   const roadSet = new Set();
   cells.forEach((c, i) => { if (c && c.id === "road") roadSet.add(i); });
@@ -220,6 +232,7 @@ export default function Home() {
   const [configErrorCount, setConfigErrorCount] = useState(0);
   const [activeTrucks, setActiveTrucks] = useState([]);
   const [view3D, setView3D] = useState(false);
+  const [buildingEditIdx, setBuildingEditIdx] = useState(null);
   const scrollRef = useRef(null);
   const simulatingRef = useRef(false);
   const skipInProgressRef = useRef(false);
@@ -230,6 +243,7 @@ export default function Home() {
   const isPaintingRef = useRef(false);
   const prevConflictTypesRef = useRef(new Set());
   const prevPhaseRef = useRef("");
+  const prevBuildStatusRef = useRef(null);
   const debriefFiredRef = useRef(false);
 
   const triggerAlert = () => {
@@ -284,12 +298,22 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ day, zones: buildZones(), project_duration: projectDuration, project_config: projectConfig || savedConfig }),
     })
-      .then((res) => res.ok ? res.json() : null)
-      .then((data) => {
-        if (data) {
-          setSimulationState(data.simulation || null);
-          setBuildProgressState(data.build_progress || null);
-          setSimConflicts(data.conflicts || []);
+    .then((res) => res.ok ? res.json() : null)
+    .then((data) => {
+      if (data) {
+        setSimulationState(data.simulation || null);
+        setBuildProgressState(data.build_progress || null);
+        if (data.build_progress) {
+          narrateBuildTransition(
+            day,
+            prevBuildStatusRef.current,
+            data.build_progress.current_status,
+            data.build_progress.current_blockers,
+          );
+
+          prevBuildStatusRef.current = data.build_progress.current_status;
+        }
+        setSimConflicts(data.conflicts || []);
           setAnalytics((prev) => [...prev, {
             day,
             conflictCount: data.conflicts?.length || 0,
@@ -433,6 +457,7 @@ export default function Home() {
     setSimConflicts([]);
     setActiveTrucks([]);
     prevConflictTypesRef.current = new Set();
+    prevBuildStatusRef.current = null;
     debriefFiredRef.current = false;
   };
 
@@ -446,7 +471,9 @@ export default function Home() {
           width: cell.width,
           height: cell.height,
           capacity: cell.width * cell.height * 25,
-          metadata: {},
+          metadata: cell.id === "building"
+            ? { floors: cell.floors, buildingType: cell.buildingType }
+            : {},
         });
       }
       return acc;
@@ -501,7 +528,9 @@ export default function Home() {
         }
       }
 
-      next[i] = { ...zone, width: w, height: h, isOrigin: true };
+      const origin = { ...zone, width: w, height: h, isOrigin: true };
+      if (zone.id === "building") { origin.floors = 5; origin.buildingType = "office"; }
+      next[i] = origin;
       for (let dy = 0; dy < h; dy++) {
         for (let dx = 0; dx < w; dx++) {
           const ti = (cy + dy) * GRID + (cx + dx);
@@ -549,7 +578,34 @@ export default function Home() {
     setActiveTrucks([]);
     prevConflictTypesRef.current = new Set();
     prevPhaseRef.current = "";
+    prevBuildStatusRef.current = null;
     debriefFiredRef.current = false;
+  };
+
+  const narrateBuildTransition = (targetDay, prevStatus, newStatus, blockers) => {
+    // Skip first-tick narration (no prior state to compare against)
+    if (prevStatus === null || prevStatus === undefined) return;
+    if (!newStatus || newStatus === prevStatus) return;
+
+    const topBlocker = (blockers && blockers.length > 0) ? blockers[0] : null;
+    const blockerText = topBlocker ? String(topBlocker) : "resource constraints";
+
+    let text = null;
+    if (prevStatus === "on_track" && newStatus === "delayed") {
+      text = `**Day ${targetDay}:** Pace slipping — ${blockerText}. Plan still moving but falling behind.`;
+    } else if (prevStatus === "on_track" && newStatus === "stalled") {
+      text = `**Day ${targetDay}:** Construction stalled — ${blockerText}.`;
+    } else if (prevStatus === "delayed" && newStatus === "stalled") {
+      text = `**Day ${targetDay}:** Stalled out — ${blockerText}.`;
+    } else if (newStatus === "on_track" && (prevStatus === "delayed" || prevStatus === "stalled")) {
+      text = `**Day ${targetDay}:** Back on track — resources restored.`;
+    } else if (prevStatus === "stalled" && newStatus === "delayed") {
+      text = `**Day ${targetDay}:** Partial recovery — ${blockerText} still limiting progress.`;
+    }
+
+    if (text) {
+      setMessages((m) => [...m, { role: "ai", text }]);
+    }
   };
 
   const fireDebrief = (analyticsOverride) => {
@@ -597,6 +653,15 @@ export default function Home() {
         if (data) {
           setSimulationState(data.simulation || null);
           setBuildProgressState(data.build_progress || null);
+          if (data.build_progress) {
+            narrateBuildTransition(
+              target,
+              prevBuildStatusRef.current,
+              data.build_progress.current_status,
+              data.build_progress.current_blockers,
+            );
+            prevBuildStatusRef.current = data.build_progress.current_status;
+          }
           setSimConflicts(data.conflicts || []);
           setAnalytics((prev) => [...prev, {
             day: target,
@@ -668,6 +733,7 @@ export default function Home() {
     setActiveTrucks([]);
     prevConflictTypesRef.current = new Set();
     prevPhaseRef.current = "";
+    prevBuildStatusRef.current = null;
     debriefFiredRef.current = false;
   };
 
@@ -733,6 +799,7 @@ export default function Home() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const zones = data.zones || [];
+      const buildingSpec = _parseBuildingSpec(formData.description);
 
       const next = Array(GRID * GRID).fill(null);
       zones.forEach((z) => {
@@ -747,7 +814,9 @@ export default function Home() {
           for (let dx = 0; dx < w && !blocked; dx++)
             if (next[(oy + dy) * GRID + (ox + dx)] !== null) blocked = true;
         if (blocked) return;
-        next[idx] = { ...zone, width: w, height: h, isOrigin: true };
+        const origin = { ...zone, width: w, height: h, isOrigin: true };
+        if (zone.id === "building") Object.assign(origin, buildingSpec);
+        next[idx] = origin;
         for (let dy = 0; dy < h; dy++)
           for (let dx = 0; dx < w; dx++) {
             const ti = (oy + dy) * GRID + (ox + dx);
@@ -772,6 +841,7 @@ export default function Home() {
       setSimConflicts([]);
       setOptimizerWorkers(formData.workers);
       setActiveTrucks([]);
+      prevBuildStatusRef.current = null;
 
       const typeCounts = {};
       next.forEach((c) => { if (c?.isOrigin) typeCounts[c.id] = (typeCounts[c.id] || 0) + 1; });
@@ -840,7 +910,12 @@ export default function Home() {
           for (let dx = 0; dx < w && !blocked; dx++)
             if (next[(oy + dy) * GRID + (ox + dx)] !== null) blocked = true;
         if (blocked) return;
-        next[idx] = { ...zone, width: w, height: h, isOrigin: true };
+        const origin = { ...zone, width: w, height: h, isOrigin: true };
+        if (zone.id === "building") {
+          origin.floors = z.metadata?.floors ?? 5;
+          origin.buildingType = z.metadata?.buildingType ?? "office";
+        }
+        next[idx] = origin;
         for (let dy = 0; dy < h; dy++)
           for (let dx = 0; dx < w; dx++) {
             const ti = (oy + dy) * GRID + (ox + dx);
@@ -863,6 +938,7 @@ export default function Home() {
       setProjectsModalOpen(false);
       setOptimizerWorkers(0);
       setActiveTrucks([]);
+      prevBuildStatusRef.current = null;
       setMessages((m) => [
         ...m,
         { role: "ai", text: `Loaded project "${data.name}". ${(data.zones || []).length} zones restored.${data.config ? " Configuration restored." : ""} Ready to simulate.` },
@@ -1194,7 +1270,13 @@ export default function Home() {
                       return (
                         <div
                           key={i}
-                          onClick={() => placeZone(cell.ref)}
+                          onClick={() => {
+                            if (!activeTool && cell.id === "building") {
+                              setBuildingEditIdx(cell.ref);
+                              return;
+                            }
+                            placeZone(cell.ref);
+                          }}
                           onMouseEnter={() => setHoveredCell(i)}
                           onMouseLeave={() => setHoveredCell(-1)}
                           style={{
@@ -1406,6 +1488,10 @@ export default function Home() {
                         key={i}
                         onClick={() => {
                           if (activeTool === 'road' || activeTool === 'boundary' || activeTool === 'fence' || activeTool === 'eraser') return;
+                          if (!activeTool && cell && cell.isOrigin && cell.id === "building") {
+                            setBuildingEditIdx(i);
+                            return;
+                          }
                           placeZone(i);
                         }}
                         onMouseDown={() => {
@@ -1844,6 +1930,22 @@ export default function Home() {
         </div>
       </div>
 
+      {buildingEditIdx !== null && cells[buildingEditIdx] && (
+        <BuildingEditPopup
+          originIdx={buildingEditIdx}
+          cell={cells[buildingEditIdx]}
+          onSave={(floors, buildingType) => {
+            setCells((prev) => {
+              const next = [...prev];
+              next[buildingEditIdx] = { ...prev[buildingEditIdx], floors, buildingType };
+              return next;
+            });
+            setBuildingEditIdx(null);
+          }}
+          onClose={() => setBuildingEditIdx(null)}
+        />
+      )}
+
       {optimizerOpen && (
         <OptimizerModal
           loading={optimizerLoading}
@@ -1904,6 +2006,107 @@ function NavTab({ label, active, onClick, badge }) {
         }}>{badge}</span>
       )}
     </button>
+  );
+}
+
+/* ───────────────────── building edit popup ───────────────────── */
+
+function BuildingEditPopup({ originIdx, cell, onSave, onClose }) {
+  const [floors, setFloors] = useState(cell.floors ?? 5);
+  const [buildingType, setBuildingType] = useState(cell.buildingType ?? "office");
+
+  const col = originIdx % 30;
+  const row = Math.floor(originIdx / 30);
+  const colLabel = col < 26 ? String.fromCharCode(65 + col) : "A" + String.fromCharCode(65 + col - 26);
+  const posLabel = `${colLabel}${row + 1}`;
+
+  const typeOptions = [
+    { value: "office", label: "Office" },
+    { value: "data_center", label: "Data Center" },
+    { value: "residential", label: "Residential" },
+    { value: "warehouse", label: "Warehouse" },
+  ];
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 1000,
+        background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 280, background: "#0F1117", borderRadius: 10,
+          border: "1px solid rgba(255,255,255,0.06)", boxShadow: "0 24px 80px rgba(0,0,0,0.5)",
+          padding: 20, fontFamily: "inherit",
+        }}
+      >
+        <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0", marginBottom: 16 }}>
+          Edit Building at {posLabel}
+        </div>
+
+        <label style={{ fontSize: 11, fontWeight: 500, color: "#8B8FA3", marginBottom: 4, display: "block" }}>
+          Floors
+        </label>
+        <input
+          type="number"
+          min={1}
+          max={50}
+          value={floors}
+          onChange={(e) => setFloors(Math.max(1, Math.min(50, parseInt(e.target.value, 10) || 1)))}
+          style={{
+            width: "100%", height: 36, padding: "0 12px", borderRadius: 6,
+            background: "#1A1D2B", border: "1px solid rgba(255,255,255,0.06)",
+            color: "#e2e8f0", fontSize: 13, outline: "none", fontFamily: "inherit",
+            marginBottom: 12, boxSizing: "border-box",
+          }}
+        />
+
+        <label style={{ fontSize: 11, fontWeight: 500, color: "#8B8FA3", marginBottom: 4, display: "block" }}>
+          Type
+        </label>
+        <select
+          value={buildingType}
+          onChange={(e) => setBuildingType(e.target.value)}
+          style={{
+            width: "100%", height: 36, padding: "0 10px", borderRadius: 6,
+            background: "#1A1D2B", border: "1px solid rgba(255,255,255,0.06)",
+            color: "#e2e8f0", fontSize: 13, outline: "none", fontFamily: "inherit",
+            marginBottom: 16, boxSizing: "border-box", appearance: "auto",
+          }}
+        >
+          {typeOptions.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button
+            onClick={onClose}
+            style={{
+              padding: "6px 14px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.08)",
+              background: "transparent", color: "#8B8FA3", fontSize: 12,
+              fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onSave(floors, buildingType)}
+            style={{
+              padding: "6px 14px", borderRadius: 6, border: "none",
+              background: "#6366F1", color: "#ffffff", fontSize: 12,
+              fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+            }}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

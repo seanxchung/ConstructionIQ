@@ -70,28 +70,21 @@ function Scene({ cells, simulationState, activeTrucks, buildPct, buildStatus, bu
     if (!b) return null;
     const w = b.cell.width || 6;
     const h = b.cell.height || 6;
+    const floors = b.cell.floors ?? 5;
+    const fullHeight = floors * 2;
 
-    // Building.js phase heights (read from that file):
-    //   excavation 0-15%   → roofline ~0   (dirt piles at y=0.15, slab at y=-0.4)
-    //   foundation 15-30%  → roofline ~0.5 (slab top)
-    //   structure  30-55%  → roofline grows from 3.5 to 24.5 as buildPct: 30→55
-    //   mep        55-75%  → roofline ~25  (steady at FULL_HEIGHT + 0.5)
-    //   finishing  75-90%  → roofline ~25.3
-    //   complete   90-100% → roofline ~25.8 (includes beacon at y=25)
-    // Badge sits `clearance` units above the roofline.
     const clearance = 2.5;
     let roofline;
     if (buildPct <= 15) roofline = 0.3;
     else if (buildPct <= 30) roofline = 0.5;
     else if (buildPct <= 55) {
-      // t goes 0 → 1 as buildPct goes 30 → 55
       const t = (buildPct - 30) / 25;
-      const currentHeight = Math.max(3, t * 24); // matches StructuralFrame math
+      const currentHeight = Math.max(2, t * fullHeight);
       roofline = currentHeight + 0.5;
     }
-    else if (buildPct <= 75) roofline = 25;    // MEP phase uses FULL_HEIGHT
-    else if (buildPct <= 90) roofline = 25.3;  // Finishing: FULL_HEIGHT + roof slab
-    else roofline = 26;                         // Complete: includes beacon
+    else if (buildPct <= 75) roofline = fullHeight + 0.5;
+    else if (buildPct <= 90) roofline = fullHeight + 0.8;
+    else roofline = fullHeight + 1;
 
     return {
       x: b.x + w / 2,
@@ -165,7 +158,7 @@ function Scene({ cells, simulationState, activeTrucks, buildPct, buildStatus, bu
 
         switch (cell.id) {
           case "building":
-            return <Building key={key} x={x} z={y} width={w} depth={h} buildPct={buildPct} />;
+            return <Building key={key} x={x} z={y} width={w} depth={h} buildPct={buildPct} floors={cell.floors ?? 5} />;
 
           case "crane": {
             const craneData = craneByPos[`${x}-${y}`];
