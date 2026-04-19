@@ -5,7 +5,7 @@ import os
 from typing import Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
@@ -21,6 +21,7 @@ from simulation import (
     DEFAULT_PROJECT_CONFIG,
 )
 from ai_agent import analyze_conflicts, chat_with_agent, generate_optimal_layout
+from pdf_config_parser import parse_project_brief_pdf
 
 load_dotenv()
 supabase: Client = create_client(
@@ -228,6 +229,36 @@ def ai_optimize(req: OptimizeRequest):
         raise HTTPException(status_code=502, detail=f"AI optimization error: {exc}")
 
     return result
+
+
+# ── PDF Config Upload ─────────────────────────────────────────────────────────
+
+@app.post("/api/config/parse-pdf")
+async def parse_config_pdf(file: UploadFile = File(...)):
+    """Accept a filled project brief PDF, extract text, use Claude to structure
+    into a valid project_config JSON."""
+    if not file.filename.lower().endswith(".pdf"):
+        return {"success": False, "error": "File must be a PDF"}
+
+    try:
+        pdf_bytes = await file.read()
+        if len(pdf_bytes) > 10 * 1024 * 1024:
+            return {"success": False, "error": "PDF too large (max 10MB)"}
+
+        result = await parse_project_brief_pdf(pdf_bytes)
+        return {
+            "success": True,
+            "config": result["config"],
+            "warnings": result.get("warnings", []),
+        }
+    except ValueError as ve:
+        return {"success": False, "error": str(ve)}
+    except Exception as e:
+        print(f"PDF parse failed: {e}")
+        return {
+            "success": False,
+            "error": "PDF parsing failed. Check that the template format wasn't modified.",
+        }
 
 
 # ── Projects ──────────────────────────────────────────────────────────────────

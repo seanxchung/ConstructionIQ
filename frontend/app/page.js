@@ -7,6 +7,7 @@ import SiteScene3D from "./components/SiteScene3D/SiteScene3D";
 import Landing from "./components/Landing/Landing";
 import ScenariosView from "./components/Scenarios/ScenariosView";
 import { generateScenarioTree } from "./components/Scenarios/scenarioGeneration";
+import UploadBriefModal from "./components/Configure/UploadBriefModal";
 
 /* ───────────────────── constants ───────────────────── */
 
@@ -233,6 +234,7 @@ export default function Home() {
     return DEFAULT_CONFIG;
   });
   const [configErrorCount, setConfigErrorCount] = useState(0);
+  const [uploadBriefModalOpen, setUploadBriefModalOpen] = useState(false);
   const [activeTrucks, setActiveTrucks] = useState([]);
   const [view3D, setView3D] = useState(false);
   const [buildingEditIdx, setBuildingEditIdx] = useState(null);
@@ -1042,6 +1044,18 @@ export default function Home() {
       const res = await fetch(`${API_BASE}/api/projects/${id}`, { method: "DELETE" });
       if (res.ok) await fetchProjects();
     } catch {}
+  };
+
+  const handleApplyBriefConfig = (newConfig) => {
+    setSavedConfig(newConfig);
+    setProjectConfig(newConfig);
+    setMessages((m) => [
+      ...m,
+      {
+        role: "ai",
+        text: "Configuration loaded from project brief. Review the Configure tab and place your zones on the Site Plan.",
+      },
+    ]);
   };
 
   const progress = ((day - 1) / (projectDuration - 1)) * 100;
@@ -1857,7 +1871,7 @@ export default function Home() {
           ) : activeTab === "schedule" ? (
             <ScheduleView analytics={analytics} day={day} currentPhase={currentPhase} projectDuration={projectDuration} ganttPhases={ganttPhases} />
           ) : activeTab === "configure" ? (
-            <ConfigurePanel cells={cells} projectDuration={projectDuration} onConfigSave={setProjectConfig} onValidationChange={setConfigErrorCount} config={savedConfig} onConfigChange={setSavedConfig} />
+            <ConfigurePanel cells={cells} projectDuration={projectDuration} onConfigSave={setProjectConfig} onValidationChange={setConfigErrorCount} config={savedConfig} onConfigChange={setSavedConfig} onUploadBrief={() => setUploadBriefModalOpen(true)} />
           ) : (
             <AnalyticsDashboard analytics={analytics} />
           )}
@@ -2130,6 +2144,15 @@ export default function Home() {
           onDelete={deleteProject}
           onOpen={fetchProjects}
           onClose={() => setProjectsModalOpen(false)}
+        />
+      )}
+
+      {uploadBriefModalOpen && (
+        <UploadBriefModal
+          isOpen={uploadBriefModalOpen}
+          currentConfig={savedConfig}
+          onApply={handleApplyBriefConfig}
+          onClose={() => setUploadBriefModalOpen(false)}
         />
       )}
     </div>
@@ -3192,7 +3215,7 @@ function getValidationIssues(config, cells) {
   return issues;
 }
 
-function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChange, config, onConfigChange }) {
+function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChange, config, onConfigChange, onUploadBrief }) {
   const [section, setSection] = useState("Phases");
   const [saved, setSaved] = useState(false);
 
@@ -3408,7 +3431,23 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
             </button>
           ))}
         </div>
-        <div style={{ padding: 12, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+        <div style={{ padding: 12, borderTop: "1px solid rgba(255,255,255,0.06)", display: "flex", flexDirection: "column", gap: 8 }}>
+          <button
+            onClick={onUploadBrief}
+            style={{
+              width: "100%", height: 36, borderRadius: 6, border: "1px solid rgba(99,102,241,0.3)",
+              background: "rgba(99,102,241,0.08)", color: "#818cf8",
+              fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+            Upload Brief (PDF)
+          </button>
           <button
             onClick={handleSave}
             style={{
