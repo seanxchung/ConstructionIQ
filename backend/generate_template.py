@@ -1,4 +1,4 @@
-"""One-time script to generate the ConstructIQ Project Brief PDF template.
+"""One-time script to generate the ConstructionIQ Project Brief PDF template.
 
 Usage:
     python backend/generate_template.py
@@ -100,7 +100,7 @@ def build_pdf():
         "Instructions: Fill in blanks below. Leave blank for &quot;not applicable&quot; or &quot;use default&quot;."
     )
     instructions(
-        "Do not change section headings. Save as PDF and upload to ConstructIQ Configure tab."
+        "Do not change section headings. Save as PDF and upload to ConstructionIQ Configure tab."
     )
 
     # ── Project Basics ──
@@ -112,6 +112,16 @@ def build_pdf():
     gap(4)
     body(f"Building floors:         {U}")
     body("Grid size:               30x30 (default, do not change)")
+
+    # ── Site Layout Hints ──
+    section("SITE LAYOUT HINTS")
+    instructions(
+        "Optional hints for auto-generated site layout. Leave blank for single building defaults."
+    )
+    gap(4)
+    body(f"Number of buildings (1 or 2):   {U}")
+    body(f"Building footprint size:        {U}")
+    instructions("         (small = 4x4, medium = 6x6, large = 8x8; leave blank for auto-size based on floors)")
 
     # ── Construction Phases ──
     section("CONSTRUCTION PHASES")

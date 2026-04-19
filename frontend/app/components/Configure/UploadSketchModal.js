@@ -4,11 +4,13 @@ import { useState, useRef, useCallback } from "react";
 
 const API_BASE = "http://localhost:8000";
 
-export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClose }) {
+export default function UploadSketchModal({ isOpen, onApply, onClose }) {
   const [state, setState] = useState("idle");
   const [selectedFile, setSelectedFile] = useState(null);
+  const [preview, setPreview] = useState(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [parsedConfig, setParsedConfig] = useState(null);
+  const [zoneCount, setZoneCount] = useState(0);
   const [parseWarnings, setParseWarnings] = useState([]);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
@@ -16,19 +18,23 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
   const reset = () => {
     setState("idle");
     setSelectedFile(null);
+    setPreview(null);
     setErrorMsg("");
     setParsedConfig(null);
+    setZoneCount(0);
     setParseWarnings([]);
   };
 
   const handleFile = (file) => {
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".pdf")) {
+    const valid = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+    if (!valid.includes(file.type)) {
       setState("error");
-      setErrorMsg("Please select a PDF file.");
-
+      setErrorMsg("Please select an image file (JPG, PNG, GIF, or WebP).");
+      return;
     }
     setSelectedFile(file);
+    setPreview(URL.createObjectURL(file));
     setState("idle");
   };
 
@@ -55,7 +61,7 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
     formData.append("file", selectedFile);
 
     try {
-      const res = await fetch(`${API_BASE}/api/config/parse-pdf`, {
+      const res = await fetch(`${API_BASE}/api/config/parse-sketch`, {
         method: "POST",
         body: formData,
       });
@@ -66,6 +72,7 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
         return;
       }
       setParsedConfig(data.config);
+      setZoneCount(data.zone_count || 0);
       setParseWarnings(data.warnings || []);
       setState("success");
     } catch {
@@ -75,31 +82,25 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
   };
 
   const handleApply = () => {
-    const hasData =
-      currentConfig?.phases?.length > 0 &&
-      (currentConfig.cranes.length +
-        currentConfig.deliveries.length +
-        currentConfig.milestones.length +
-        currentConfig.equipment.length) > 0;
-
-    if (hasData && state !== "confirm_overwrite") {
-      setState("confirm_overwrite");
-      return;
-    }
     onApply(parsedConfig);
     onClose();
+    reset();
   };
 
   if (!isOpen) return null;
 
-  const configSummary = parsedConfig
+  const summary = parsedConfig
     ? [
-        parsedConfig.phases?.length && `${parsedConfig.phases.length} phases`,
-        parsedConfig.cranes?.length && `${parsedConfig.cranes.length} cranes`,
-        parsedConfig.deliveries?.length && `${parsedConfig.deliveries.length} deliveries`,
-        Object.keys(parsedConfig.workforce || {}).length &&
-          `${Object.keys(parsedConfig.workforce || {}).length} workforce entries`,
-        parsedConfig.milestones?.length && `${parsedConfig.milestones.length} milestones`,
+        parsedConfig.buildings?.length && `${parsedConfig.buildings.length} building(s)`,
+        parsedConfig.cranes?.length && `${parsedConfig.cranes.length} crane(s)`,
+        parsedConfig.workerZones?.length && `${parsedConfig.workerZones.length} worker zone(s)`,
+        parsedConfig.materialZones?.length && `${parsedConfig.materialZones.length} material zone(s)`,
+        parsedConfig.roads?.length && `${parsedConfig.roads.length} road cell(s)`,
+        parsedConfig.offices?.length && `${parsedConfig.offices.length} office(s)`,
+        parsedConfig.parking?.length && `${parsedConfig.parking.length} parking zone(s)`,
+        parsedConfig.truckStaging?.length && `${parsedConfig.truckStaging.length} truck staging`,
+        parsedConfig.fences?.length && `${parsedConfig.fences.length} fence cell(s)`,
+        parsedConfig.boundaries?.length && `${parsedConfig.boundaries.length} boundary cell(s)`,
       ].filter(Boolean).join(", ")
     : "";
 
@@ -120,7 +121,7 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: 500,
+          width: 520,
           background: "#0F1117",
           borderRadius: 10,
           border: "1px solid rgba(255,255,255,0.06)",
@@ -140,14 +141,14 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
         >
           <div>
             <div style={{ fontSize: 15, fontWeight: 600, color: "#e2e8f0" }}>
-              Upload Project Brief
+              Upload Site Sketch
             </div>
             <div style={{ fontSize: 12, color: "#8B8FA3", marginTop: 4, lineHeight: 1.4 }}>
-              Upload a filled ConstructionIQ project brief PDF to auto-configure your project.
+              Take a photo of your hand-drawn 30×30 grid and AI will place the zones on the site plan.
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={() => { onClose(); reset(); }}
             style={{
               background: "none",
               border: "none",
@@ -165,10 +166,9 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
 
         {/* Body */}
         <div style={{ padding: "20px 24px" }}>
-          {/* ── Idle / file-select state ── */}
+          {/* Idle / file-select */}
           {(state === "idle" || (state === "error" && !selectedFile)) && (
             <>
-              {/* Dropzone */}
               <div
                 onDrop={handleDrop}
                 onDragOver={handleDragOver}
@@ -176,11 +176,11 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
                 onClick={() => fileInputRef.current?.click()}
                 style={{
                   width: "100%",
-                  height: 160,
-                  border: `2px dashed ${dragOver ? "rgba(99,102,241,0.6)" : "rgba(255,255,255,0.1)"}`,
+                  height: preview ? "auto" : 160,
+                  border: `2px dashed ${dragOver ? "rgba(245,158,11,0.6)" : "rgba(255,255,255,0.1)"}`,
                   borderRadius: 8,
                   background: dragOver
-                    ? "rgba(99,102,241,0.06)"
+                    ? "rgba(245,158,11,0.06)"
                     : "rgba(255,255,255,0.02)",
                   display: "flex",
                   flexDirection: "column",
@@ -189,56 +189,52 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
                   cursor: "pointer",
                   transition: "border-color 0.2s, background 0.2s",
                   gap: 8,
+                  padding: preview ? 8 : 0,
+                  overflow: "hidden",
                 }}
               >
-                <svg
-                  width="32"
-                  height="32"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke={dragOver ? "#818cf8" : "#4A4E63"}
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                  <polyline points="17 8 12 3 7 8" />
-                  <line x1="12" y1="3" x2="12" y2="15" />
-                </svg>
-                {selectedFile ? (
-                  <span style={{ fontSize: 13, color: "#e2e8f0", fontWeight: 500 }}>
-                    {selectedFile.name}
-                  </span>
+                {preview ? (
+                  <img
+                    src={preview}
+                    alt="Grid sketch preview"
+                    style={{
+                      maxWidth: "100%",
+                      maxHeight: 280,
+                      borderRadius: 6,
+                      objectFit: "contain",
+                    }}
+                  />
                 ) : (
-                  <span style={{ fontSize: 12, color: "#64748b" }}>
-                    Drop PDF here or click to browse
-                  </span>
+                  <>
+                    <svg
+                      width="32" height="32" viewBox="0 0 24 24" fill="none"
+                      stroke={dragOver ? "#f59e0b" : "#4A4E63"}
+                      strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+                    >
+                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                      <circle cx="8.5" cy="8.5" r="1.5" />
+                      <polyline points="21 15 16 10 5 21" />
+                    </svg>
+                    <span style={{ fontSize: 12, color: "#64748b" }}>
+                      Drop grid photo here or click to browse
+                    </span>
+                  </>
                 )}
               </div>
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".pdf"
+                accept="image/*"
                 style={{ display: "none" }}
                 onChange={(e) => handleFile(e.target.files?.[0])}
               />
 
-              {/* Template download link */}
               <div style={{ marginTop: 12, textAlign: "center" }}>
-                <span style={{ fontSize: 12, color: "#64748b" }}>
-                  {"Don't have a template? "}
+                <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.5 }}>
+                  Print the 30×30 grid template, draw your site layout with a highlighter, label each zone, then snap a photo.
                 </span>
-                <a
-                  href="/constructiq_project_brief_template.pdf"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ fontSize: 12, color: "#818cf8", textDecoration: "underline" }}
-                >
-                  Download Project Brief Template
-                </a>
               </div>
 
-              {/* Upload button */}
               {selectedFile && (
                 <button
                   onClick={handleUpload}
@@ -248,21 +244,21 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
                     marginTop: 16,
                     borderRadius: 8,
                     border: "none",
-                    background: "#6366F1",
-                    color: "#fff",
+                    background: "#f59e0b",
+                    color: "#000",
                     fontSize: 13,
                     fontWeight: 600,
                     cursor: "pointer",
                     fontFamily: "inherit",
                   }}
                 >
-                  Upload &amp; Parse
+                  Analyze Sketch
                 </button>
               )}
             </>
           )}
 
-          {/* ── Uploading state ── */}
+          {/* Uploading */}
           {state === "uploading" && (
             <div
               style={{
@@ -274,23 +270,32 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
                 gap: 16,
               }}
             >
+              {preview && (
+                <img
+                  src={preview}
+                  alt="Analyzing..."
+                  style={{ maxWidth: 200, maxHeight: 140, borderRadius: 6, objectFit: "contain", opacity: 0.5 }}
+                />
+              )}
               <div
                 style={{
                   width: 32,
                   height: 32,
-                  border: "3px solid rgba(99,102,241,0.2)",
-                  borderTop: "3px solid #6366F1",
+                  border: "3px solid rgba(245,158,11,0.2)",
+                  borderTop: "3px solid #f59e0b",
                   borderRadius: "50%",
                   animation: "spin 0.8s linear infinite",
                 }}
               />
-              <span style={{ fontSize: 13, color: "#8B8FA3" }}>Parsing your brief...</span>
+              <span style={{ fontSize: 13, color: "#8B8FA3" }}>
+                AI is reading your sketch...
+              </span>
               <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
             </div>
           )}
 
-          {/* ── Error state ── */}
-          {state === "error" && (
+          {/* Error */}
+          {state === "error" && selectedFile && (
             <div
               style={{
                 display: "flex",
@@ -302,13 +307,9 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
             >
               <div
                 style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: "50%",
+                  width: 40, height: 40, borderRadius: "50%",
                   background: "rgba(239,68,68,0.1)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
+                  display: "flex", alignItems: "center", justifyContent: "center",
                 }}
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2">
@@ -323,17 +324,11 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
               <button
                 onClick={reset}
                 style={{
-                  marginTop: 8,
-                  height: 36,
-                  borderRadius: 6,
+                  marginTop: 8, height: 36, borderRadius: 6,
                   border: "1px solid rgba(255,255,255,0.08)",
-                  background: "transparent",
-                  color: "#8B8FA3",
-                  fontSize: 12,
-                  fontWeight: 500,
-                  padding: "0 20px",
-                  cursor: "pointer",
-                  fontFamily: "inherit",
+                  background: "transparent", color: "#8B8FA3",
+                  fontSize: 12, fontWeight: 500, padding: "0 20px",
+                  cursor: "pointer", fontFamily: "inherit",
                 }}
               >
                 Try Again
@@ -341,7 +336,7 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
             </div>
           )}
 
-          {/* ── Success state ── */}
+          {/* Success */}
           {state === "success" && (
             <div
               style={{
@@ -354,13 +349,9 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
             >
               <div
                 style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: "50%",
+                  width: 40, height: 40, borderRadius: "50%",
                   background: "rgba(34,197,94,0.1)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
+                  display: "flex", alignItems: "center", justifyContent: "center",
                 }}
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2.5">
@@ -368,11 +359,11 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
                 </svg>
               </div>
               <span style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0" }}>
-                Brief parsed successfully
+                Sketch analyzed — {zoneCount} zones detected
               </span>
-              {configSummary && (
-                <span style={{ fontSize: 12, color: "#8B8FA3", textAlign: "center" }}>
-                  {configSummary}
+              {summary && (
+                <span style={{ fontSize: 12, color: "#8B8FA3", textAlign: "center", lineHeight: 1.5 }}>
+                  {summary}
                 </span>
               )}
               {parseWarnings.length > 0 && (
@@ -381,6 +372,13 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
                     <div key={i}>{w}</div>
                   ))}
                 </div>
+              )}
+              {preview && (
+                <img
+                  src={preview}
+                  alt="Your sketch"
+                  style={{ maxWidth: 200, maxHeight: 120, borderRadius: 6, objectFit: "contain", opacity: 0.6, marginTop: 4 }}
+                />
               )}
               <button
                 onClick={handleApply}
@@ -398,81 +396,25 @@ export default function UploadBriefModal({ isOpen, currentConfig, onApply, onClo
                   fontFamily: "inherit",
                 }}
               >
-                Apply Configuration
+                Place Zones on Site Plan
               </button>
-            </div>
-          )}
-
-          {/* ── Confirm overwrite state ── */}
-          {state === "confirm_overwrite" && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                padding: "32px 0",
-                gap: 12,
-              }}
-            >
-              <div
+              <button
+                onClick={reset}
                 style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: "50%",
-                  background: "rgba(245,158,11,0.1)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
+                  width: "100%",
+                  height: 36,
+                  borderRadius: 8,
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  background: "transparent",
+                  color: "#8B8FA3",
+                  fontSize: 12,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
                 }}
               >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2">
-                  <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                  <line x1="12" y1="9" x2="12" y2="13" />
-                  <line x1="12" y1="17" x2="12.01" y2="17" />
-                </svg>
-              </div>
-              <span style={{ fontSize: 13, color: "#e2e8f0", textAlign: "center", lineHeight: 1.5 }}>
-                This will replace your current configuration. Continue?
-              </span>
-              <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-                <button
-                  onClick={() => setState("success")}
-                  style={{
-                    height: 36,
-                    borderRadius: 6,
-                    border: "1px solid rgba(255,255,255,0.08)",
-                    background: "transparent",
-                    color: "#8B8FA3",
-                    fontSize: 12,
-                    fontWeight: 500,
-                    padding: "0 20px",
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => {
-                    onApply(parsedConfig);
-                    onClose();
-                  }}
-                  style={{
-                    height: 36,
-                    borderRadius: 6,
-                    border: "none",
-                    background: "#6366F1",
-                    color: "#fff",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    padding: "0 20px",
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                  }}
-                >
-                  Replace Configuration
-                </button>
-              </div>
+                Upload Different Sketch
+              </button>
             </div>
           )}
         </div>

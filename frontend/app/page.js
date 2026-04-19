@@ -9,6 +9,7 @@ import CraneLogo from "./components/CraneLogo";
 import ScenariosView from "./components/Scenarios/ScenariosView";
 import { generateScenarioTree } from "./components/Scenarios/scenarioGeneration";
 import UploadBriefModal from "./components/Configure/UploadBriefModal";
+import UploadSketchModal from "./components/Configure/UploadSketchModal";
 
 /* ───────────────────── constants ───────────────────── */
 
@@ -448,6 +449,7 @@ export default function Home() {
     finalBuildPct: 0, finalStatus: null, stallEvents: [], worstBlocker: null,
   });
   const [uploadBriefModalOpen, setUploadBriefModalOpen] = useState(false);
+  const [uploadSketchModalOpen, setUploadSketchModalOpen] = useState(false);
   const [activeTrucks, setActiveTrucks] = useState([]);
   const [view3D, setView3D] = useState(false);
   const [buildingEditIdx, setBuildingEditIdx] = useState(null);
@@ -688,7 +690,7 @@ export default function Home() {
           width: 40, height: 40, border: "3px solid rgba(255,255,255,0.06)", borderTopColor: "#6366F1",
           borderRadius: "50%", animation: "spin 0.8s linear infinite",
         }} />
-        <span style={{ fontSize: 14, color: "#8B8FA3", fontWeight: 500 }}>Loading ConstructIQ...</span>
+        <span style={{ fontSize: 14, color: "#8B8FA3", fontWeight: 500 }}>Loading ConstructionIQ...</span>
       </div>
     );
   }
@@ -1235,6 +1237,37 @@ Be direct and data-grounded. Do not claim success if the numbers above show stal
     console.log("[PDF-UPLOAD] Applied config with zone count:", zoneCount);
   };
 
+  const handleApplySketchConfig = (sketchSpatial) => {
+    const spatialKeys = ["buildings", "workerZones", "materialZones", "roads", "offices", "parking", "fences", "manlifts", "deliveryZones", "truckStaging", "boundaries", "cranes"];
+    const merged = { ...savedConfig };
+    for (const key of spatialKeys) {
+      merged[key] = sketchSpatial[key] || [];
+    }
+
+    setSavedConfig(merged);
+    setProjectConfig(merged);
+    setIsPlaying(false);
+    setDay(1);
+    setAnalytics([]);
+    setSimulationState(null);
+    setBuildProgressState(null);
+    setSimConflicts([]);
+    setActiveTrucks([]);
+    setBuildOutcome({ stallDays: 0, delayedDays: 0, daysOnTrack: 0, finalBuildPct: 0, finalStatus: null, stallEvents: [], worstBlocker: null });
+    prevBuildStatusRef.current = null;
+    debriefFiredRef.current = false;
+    clearScenarioState();
+    const zoneCount = spatialKeys.reduce((sum, key) => sum + (merged[key]?.length || 0), 0);
+    setMessages((m) => [
+      ...m,
+      {
+        role: "ai",
+        text: `**Sketch imported.** ${zoneCount} zones placed from your hand-drawn layout. Switch to the Site Plan tab to review and adjust.`,
+      },
+    ]);
+    setActiveTab("site");
+  };
+
   const progress = ((day - 1) / (projectDuration - 1)) * 100;
   const placedCount = cells.filter((c) => c && c.isOrigin).length;
   const zoneCounts = ZONES.map((z) => ({
@@ -1359,7 +1392,7 @@ Be direct and data-grounded. Do not claim success if the numbers above show stal
       <nav style={S.nav}>
         <div style={S.navLeft}>
           <CraneLogo size={32} />
-          <span style={S.logoText}>ConstructIQ</span>
+          <span style={S.logoText}>ConstructionIQ</span>
           <span style={S.badge}>Beta</span>
         </div>
         <div style={S.navCenter}>
@@ -1489,6 +1522,13 @@ Be direct and data-grounded. Do not claim success if the numbers above show stal
               style={{ ...S.toolBtn, color: "#8B8FA3" }}
             >
               Projects
+            </button>
+            <div style={{ width: 1, height: 20, background: "rgba(255,255,255,0.06)", margin: "0 4px" }} />
+            <button
+              onClick={() => setUploadSketchModalOpen(true)}
+              style={{ ...S.toolBtn, color: "#f59e0b" }}
+            >
+              Upload Sketch
             </button>
             <div style={{ flex: 1 }} />
             <div style={S.zoneCounter}>
@@ -2047,7 +2087,7 @@ Be direct and data-grounded. Do not claim success if the numbers above show stal
           ) : activeTab === "schedule" ? (
             <ScheduleView analytics={analytics} day={day} currentPhase={currentPhase} projectDuration={projectDuration} ganttPhases={ganttPhases} />
           ) : activeTab === "configure" ? (
-            <ConfigurePanel cells={cells} projectDuration={projectDuration} onConfigSave={setProjectConfig} onValidationChange={setConfigErrorCount} onValidationIssuesChange={setValidationIssues} config={savedConfig} onConfigChange={setSavedConfig} onUploadBrief={() => setUploadBriefModalOpen(true)} />
+            <ConfigurePanel cells={cells} projectDuration={projectDuration} onConfigSave={setProjectConfig} onValidationChange={setConfigErrorCount} onValidationIssuesChange={setValidationIssues} config={savedConfig} onConfigChange={setSavedConfig} onUploadBrief={() => setUploadBriefModalOpen(true)} onUploadSketch={() => setUploadSketchModalOpen(true)} />
           ) : (
             <AnalyticsDashboard analytics={analytics} />
           )}
@@ -2319,6 +2359,13 @@ Be direct and data-grounded. Do not claim success if the numbers above show stal
           currentConfig={savedConfig}
           onApply={handleApplyBriefConfig}
           onClose={() => setUploadBriefModalOpen(false)}
+        />
+      )}
+      {uploadSketchModalOpen && (
+        <UploadSketchModal
+          isOpen={uploadSketchModalOpen}
+          onApply={handleApplySketchConfig}
+          onClose={() => setUploadSketchModalOpen(false)}
         />
       )}
     </div>
@@ -3220,7 +3267,7 @@ function getValidationIssues(config, cells) {
   return issues;
 }
 
-function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChange, onValidationIssuesChange, config, onConfigChange, onUploadBrief }) {
+function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChange, onValidationIssuesChange, config, onConfigChange, onUploadBrief, onUploadSketch }) {
   const [section, setSection] = useState("Phases");
   const [saved, setSaved] = useState(false);
 
@@ -3456,6 +3503,22 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
               <line x1="12" y1="3" x2="12" y2="15" />
             </svg>
             Upload Brief (PDF)
+          </button>
+          <button
+            onClick={onUploadSketch}
+            style={{
+              width: "100%", height: 36, borderRadius: 6, border: "1px solid rgba(245,158,11,0.3)",
+              background: "rgba(245,158,11,0.08)", color: "#f59e0b",
+              fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <polyline points="21 15 16 10 5 21" />
+            </svg>
+            Upload Site Sketch
           </button>
           <button
             onClick={handleSave}

@@ -1,4 +1,4 @@
-"""ConstructIQ — AI Site Manager Agent
+"""ConstructionIQ — AI Site Manager Agent
 
 Powered by Claude via the Anthropic API. Provides two capabilities:
   1. Proactive conflict analysis with actionable alerts
@@ -104,6 +104,24 @@ def _format_state_context(simulation_state: dict[str, Any], day: int) -> str:
     return "\n".join(lines)
 
 
+def _format_validation_issues(issues: list[dict[str, Any]]) -> str:
+    """Format plan validation issues into a readable block for the LLM."""
+    if not issues:
+        return "No plan validation issues."
+
+    errors = [i for i in issues if i.get("severity") == "error"]
+    warnings = [i for i in issues if i.get("severity") == "warning"]
+
+    lines = [f"=== PLAN VALIDATION: {len(errors)} ERROR(S), {len(warnings)} WARNING(S) ===\n"]
+    for i in errors:
+        lines.append(f"  ERROR [{i.get('section', '?')}]: {i.get('message', '')}")
+    for i in warnings:
+        lines.append(f"  WARNING [{i.get('section', '?')}]: {i.get('message', '')}")
+    lines.append("")
+    lines.append("These issues must be addressed for the plan to be valid.")
+    return "\n".join(lines)
+
+
 def _format_conflicts(conflicts: list[dict[str, Any]]) -> str:
     """Format conflict list into a readable block for the LLM."""
     if not conflicts:
@@ -168,10 +186,12 @@ def chat_with_agent(
     simulation_state: dict[str, Any],
     day: int,
     current_conflicts: list[dict[str, Any]] | None = None,
+    validation_issues: list[dict[str, Any]] | None = None,
 ) -> str:
     """Answer a project manager's question using live simulation state as context."""
     state_context = _format_state_context(simulation_state, day)
     conflict_context = _format_conflicts(current_conflicts or [])
+    validation_context = _format_validation_issues(validation_issues or [])
 
     user_prompt = f"""Here is the current site state you have access to:
 
@@ -179,9 +199,11 @@ def chat_with_agent(
 
 {conflict_context}
 
+{validation_context}
+
 The project manager asks: {message}
 
-Answer using the actual data above. Cite zone names, material quantities, crane IDs, worker counts. If cost is involved give a dollar range. If the user asks for detail, include OSHA or ASME references. Factor in any active conflicts. Keep it brief unless they ask you to expand."""
+Answer using the actual data above. Cite zone names, material quantities, crane IDs, worker counts. If cost is involved give a dollar range. If the user asks for detail, include OSHA or ASME references. Factor in any active conflicts AND any plan validation issues — these are problems the PM needs to fix before the plan is sound. Keep it brief unless they ask you to expand."""
 
     response = client.messages.create(
         model=MODEL,

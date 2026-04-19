@@ -22,6 +22,7 @@ from simulation import (
 )
 from ai_agent import analyze_conflicts, chat_with_agent, generate_optimal_layout
 from pdf_config_parser import parse_project_brief_pdf
+from sketch_parser import parse_sketch_image
 
 load_dotenv()
 supabase: Client = create_client(
@@ -29,7 +30,7 @@ supabase: Client = create_client(
     os.environ["SUPABASE_KEY"],
 )
 
-app = FastAPI(title="ConstructIQ", version="0.1.0")
+app = FastAPI(title="ConstructionIQ", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -89,6 +90,7 @@ class ChatRequest(BaseModel):
     zones: Optional[list[dict[str, Any]]] = None
     project_duration: int = 180
     current_conflicts: Optional[list[dict[str, Any]]] = None
+    validation_issues: Optional[list[dict[str, Any]]] = None
 
 
 class ChatResponse(BaseModel):
@@ -119,7 +121,7 @@ class LoadProjectRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {"status": "ConstructIQ backend running"}
+    return {"status": "ConstructionIQ backend running"}
 
 
 @app.post("/api/simulate", response_model=SimulateResponse)
@@ -207,7 +209,9 @@ def ai_chat(req: ChatRequest):
     state = run_simulation_tick(zones, req.day, req.project_duration)
 
     try:
-        reply = chat_with_agent(req.message, state, req.day, req.current_conflicts)
+        reply = chat_with_agent(
+            req.message, state, req.day, req.current_conflicts, req.validation_issues,
+        )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"AI agent error: {exc}")
 
@@ -258,6 +262,40 @@ async def parse_config_pdf(file: UploadFile = File(...)):
         return {
             "success": False,
             "error": "PDF parsing failed. Check that the template format wasn't modified.",
+        }
+
+
+# ── Sketch Upload ─────────────────────────────────────────────────────────────
+
+@app.post("/api/config/parse-sketch")
+async def parse_config_sketch(file: UploadFile = File(...)):
+    """Accept an image of a hand-drawn 30x30 grid, use Claude Vision to extract
+    zone placements, and return spatial config JSON."""
+    allowed = (".jpg", ".jpeg", ".png", ".gif", ".webp")
+    ext = "." + file.filename.lower().rsplit(".", 1)[-1] if "." in file.filename else ""
+    if ext not in allowed:
+        return {"success": False, "error": f"Image must be one of: {', '.join(allowed)}"}
+
+    try:
+        image_bytes = await file.read()
+        if len(image_bytes) > 20 * 1024 * 1024:
+            return {"success": False, "error": "Image too large (max 20MB)"}
+
+        content_type = file.content_type or "image/jpeg"
+        result = parse_sketch_image(image_bytes, content_type)
+        return {
+            "success": True,
+            "config": result["config"],
+            "zone_count": result["zone_count"],
+            "warnings": result.get("warnings", []),
+        }
+    except ValueError as ve:
+        return {"success": False, "error": str(ve)}
+    except Exception as e:
+        print(f"Sketch parse failed: {e}")
+        return {
+            "success": False,
+            "error": "Sketch parsing failed. Make sure the image is clear and well-lit.",
         }
 
 

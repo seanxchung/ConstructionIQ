@@ -130,7 +130,7 @@ export default function Landing() {
             fontSize: 17, fontWeight: 600, color: "#ffffff",
             letterSpacing: "-0.02em", marginLeft: 12,
           }}>
-            ConstructIQ
+            ConstructionIQ
           </span>
         </div>
 
@@ -152,7 +152,7 @@ export default function Landing() {
             color: "#ffffff", lineHeight: 1,
             margin: 0, textAlign: "center",
           }}>
-            ConstructIQ
+            ConstructionIQ
           </h1>
 
           {/* Tagline */}

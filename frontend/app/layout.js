@@ -7,7 +7,7 @@ const inter = Inter({
 });
 
 export const metadata = {
-  title: "ConstructIQ — AI Construction Intelligence",
+  title: "ConstructionIQ — AI Construction Intelligence",
   description: "AI-powered construction site simulation built for Trimble",
 };
 

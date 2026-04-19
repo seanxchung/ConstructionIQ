@@ -1,0 +1,140 @@
+"""One-off script to generate a filled example brief for the demo.
+
+Usage: python backend/generate_example_brief.py
+Output: frontend/public/example_filled_brief.pdf (and also saves to /mnt-style Downloads if you want)
+"""
+
+import os
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+
+OUTPUT_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "frontend", "public", "example_filled_brief.pdf"
+)
+
+HEADER_STYLE = ParagraphStyle("Header", fontName="Helvetica-Bold", fontSize=18, leading=24, textColor="#1a1a2e", spaceAfter=6)
+SECTION_STYLE = ParagraphStyle("Section", fontName="Helvetica-Bold", fontSize=12, leading=16, textColor="#1a1a2e", spaceBefore=4, spaceAfter=4)
+BODY_STYLE = ParagraphStyle("Body", fontName="Courier", fontSize=10, leading=16, textColor="#333333")
+INSTRUCTIONS_STYLE = ParagraphStyle("Instructions", fontName="Helvetica", fontSize=9, leading=13, textColor="#555555", spaceAfter=4)
+
+DIVIDER = "\u2501" * 50
+
+
+def build_pdf():
+    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    doc = SimpleDocTemplate(OUTPUT_PATH, pagesize=letter,
+                            leftMargin=0.75 * inch, rightMargin=0.75 * inch,
+                            topMargin=0.6 * inch, bottomMargin=0.6 * inch)
+    story = []
+    add = story.append
+
+    def header(text): add(Paragraph(text, HEADER_STYLE))
+    def section(text):
+        add(Spacer(1, 6))
+        add(Paragraph(DIVIDER, BODY_STYLE))
+        add(Paragraph(text, SECTION_STYLE))
+        add(Paragraph(DIVIDER, BODY_STYLE))
+        add(Spacer(1, 4))
+    def body(text): add(Paragraph(text, BODY_STYLE))
+    def instructions(text): add(Paragraph(text, INSTRUCTIONS_STYLE))
+    def gap(h=8): add(Spacer(1, h))
+
+    header("CONSTRUCTIQ PROJECT BRIEF")
+    gap(4)
+    instructions("Example filled brief — Meridian Data Center Phase 1.")
+
+    # ── Project Basics ──
+    section("PROJECT BASICS")
+    body("Project name:            Meridian Data Center Phase 1")
+    body("Total duration (days):   180")
+    body("Project type:            data center")
+    gap(4)
+    body("Building floors:         4")
+ rid size:               30x30 (default, do not change)")
+
+    # ── Site Layout Hints ──
+    section("SITE LAYOUT HINTS")
+    body("Number of buildings (1 or 2):   1")
+    body("Building footprint size:        large")
+
+    # ── Construction Phases ──
+    section("CONSTRUCTION PHASES")
+    body("Phase 1: Site Preparation   Days 1 to 15")
+    body("Phase 2: Foundation         Days 16 to 50")
+    body("Phase 3: Structural         Days 51 to 110")
+    body("Phase 4: MEP                Days 111 to 150")
+    body("Phase 5: Finishing          Days 151 to 170")
+    bodeout           Days 171 to 180")
+
+    # ── Workforce ──
+    section("WORKFORCE BY PHASE")
+    body("SITE PREPARATION")
+    body("  Total workers:         18")
+    body("  Laborers: 14  Operators: 4")
+    gap(6)
+    body("FOUNDATION")
+    body("  Total workers:         45")
+    body("  Laborers: 18  Carpenters: 12  Ironworkers: 10  Operators: 5")
+    gap(6)
+    body("STRUCTURAL")
+    body("  Total workers:         80")
+    body("  Laborers: 15  Carpenters: 8  Ironworkers: 45  Operators: 12")
+    gap(6)
+    body("MEP")
+    body("  Total workers:         70")
+    body("  Laborers: 10  Electricians: 30  Plumbers: 22  Operators: 8")
+    gap(6)
+    body("FINISHING")
+    body("  Total workers:         40")
+    body("  Labor Carpenters: 10  Painters: 15  Operators: 3")
+    gap(6)
+    body("CLOSEOUT")
+    body("  Total workers:         12")
+    body("  Laborers: 9  Operators: 3")
+
+    # ── Cranes ──
+    section("CRANE CONFIGURATION")
+    body("Crane 1:")
+    body("  Type (Tower/Mobile/Boom):  Tower")
+    body("  Arrival day: 16   Departure day: 130")
+    body("  Notes: Primary lift for structural steel and MEP skids")
+    gap(6)
+
+    # ── Deliveries ──
+    section("MATERIAL DELIVERIES")
+    body("Concrete deliveries on days:      20, 28, 35, 42, 49")
+    body("Rebar deliveries on days:         18, 30, 42")
+    body("Structural steel on days:         55, 65, 75, 85, 95, 105")
+    body("MEP conduit on days:              115, 125, 135, 145")
+    body("Lumber on days:                   22, 52, 155")
+    body("Masonry on days:                  ")
+
+    # ── Milestones ──
+    section"Milestone 1: Foundation concrete pour complete   Day 50")
+    body("Milestone 2: Structural steel topped out         Day 105")
+    body("Milestone 3: MEP rough-in inspection             Day 140")
+    body("Milestone 4: Owner walkthrough                   Day 175")
+
+    # ── Notes ──
+    section("NOTES &amp; CONTEXT")
+    body("_______________________________________________________________________")
+    body("Tier III data center, 4 levels above grade. Critical path runs through")
+    body("MEP skid delivery and commissioning. Coordination with utility for")
+    body("high-voltage feeders scheduled for Day 130.")
+    body("_______________________________________________________________")
+
+    gap(12)
+    add(Paragraph(DIVIDER, BODY_STYLE))
+    add(Paragraph("END OF BRIEF", SECTION_STYLE))
+    add(Paragraph(DIVIDER, BODY_STYLE))
+
+    doc.build(story)
+    print(f"Example filled brief generated: {os.path.abspath(OUTPUT_PATH)}")
+
+
+if __name__ == "__main__":
+    build_pdf()
+
+

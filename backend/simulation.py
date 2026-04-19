@@ -1,4 +1,4 @@
-"""ConstructIQ — Construction Site Simulation Engine
+"""ConstructionIQ — Construction Site Simulation Engine
 
 Critical-path-driven, day-by-day simulation of a mid-rise commercial
 building / data center construction project.  Models task dependencies,
