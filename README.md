@@ -1,2 +1,2 @@
-# constructiq
-AI-powered construction site simulation for Trimble
+# constructioniq
+AI-powered construction site simulation
